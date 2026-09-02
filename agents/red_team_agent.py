@@ -1,1166 +1,1327 @@
 """
 PragyanAI SiliconAI
-Red Team Agent
+Red-Team Verification Agent
 
-Purpose
--------
-The Red Team Agent acts as an adversarial verification engineer.
+Generates adversarial verification scenarios designed to expose
+corner-case RTL bugs.
 
-It deliberately searches for:
-- Boundary-condition failures
-- Illegal inputs
-- Reset-related failures
-- Protocol violations
-- Back-to-back operations
-- Overflow / underflow
-- FSM illegal states
-- Timing-sensitive behavior
-- X/Z propagation
-- Width/sign issues
-- State retention problems
-- Handshake failures
-- Corner-case sequences
-
-The agent does NOT modify RTL.
-
-It produces compact, machine-readable adversarial scenarios
-that can be consumed by the Test Generator / Testbench Generator.
-
-Design goals
-------------
-1. Compatible with LangGraph state.
-2. Compatible with existing config/settings.py and config/prompts.py.
-3. Low token usage for Groq.
-4. Robust JSON parsing.
-5. Deterministic fallback if LLM is unavailable.
-6. No false claim that a scenario has passed.
+The agent has:
+- deterministic scenario generation
+- optional Groq/LLM enhancement
+- no dependency on SymbiYosys
+- compact prompts to avoid excessive API-token usage
 """
 
 from __future__ import annotations
 
 import json
 import re
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_groq import ChatGroq
+try:
+    from config.prompts import (
+        compact_json,
+        compact_red_team,
+        compact_rtl,
+        compact_rtl_analysis,
+        load_prompt,
+        limit_text,
+    )
+except Exception:
 
-from config.settings import (
-    DEFAULT_MAX_TOKENS,
-    DEFAULT_MODEL,
-    DEFAULT_TEMPERATURE,
-    GROQ_API_KEY,
-)
-from config.prompts import (
-    compact_json,
-    compact_red_team,
-    compact_rtl,
-    compact_rtl_analysis,
-    compact_simulation_log,
-    compact_text if False else limit_text,
-    load_prompt,
-)
+    def limit_text(
+        text: Any,
+        max_chars: int = 6000,
+    ) -> str:
+        value = str(text or "")
+        return value[:max_chars]
 
+    def compact_rtl(
+        rtl: Any,
+        max_chars: int = 6000,
+    ) -> str:
+        return limit_text(rtl, max_chars)
 
-class RedTeamAgent:
-    """
-    Adversarial verification agent.
+    def compact_rtl_analysis(
+        analysis: Any,
+        max_chars: int = 4000,
+    ) -> str:
+        return limit_text(analysis, max_chars)
 
-    Input state may contain:
-        rtl_code
-        specification
-        rtl_analysis
-        verification_plan
-        generated_tests
-        tests
-        coverage
-        coverage_gaps
-        failure_analysis
-        red_team_scenarios
-        simulation_output
-
-    Output:
-        red_team_scenarios
-        agent_log
-        agent_trace
-        messages
-        warnings
-    """
-
-    AGENT_NAME = "Red Team Agent"
-
-    def __init__(
-        self,
-        api_key: Optional[str] = None,
-        model: Optional[str] = None,
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-    ) -> None:
-
-        self.api_key = api_key or GROQ_API_KEY
-        self.model = model or DEFAULT_MODEL
-        self.temperature = (
-            DEFAULT_TEMPERATURE if temperature is None else temperature
-        )
-        self.max_tokens = (
-            DEFAULT_MAX_TOKENS if max_tokens is None else max_tokens
-        )
-
-        self.llm = None
-
-        if self.api_key:
-            try:
-                self.llm = ChatGroq(
-                    api_key=self.api_key,
-                    model=self.model,
-                    temperature=self.temperature,
-                    max_tokens=min(self.max_tokens, 1800),
-                )
-            except Exception:
-                self.llm = None
-
-    # ------------------------------------------------------------------
-    # Utility methods
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _timestamp() -> str:
-        return datetime.utcnow().isoformat() + "Z"
-
-    @staticmethod
-    def _safe_json(text: str) -> Optional[Any]:
-        """
-        Extract JSON from an LLM response.
-
-        Handles:
-        - Plain JSON
-        - Markdown fenced JSON
-        - Extra explanatory text surrounding JSON
-        """
-
-        if not text:
-            return None
-
-        text = text.strip()
-
-        # Remove markdown fences.
-        text = re.sub(r"```json\s*", "", text, flags=re.IGNORECASE)
-        text = re.sub(r"```\s*", "", text)
-
-        # First attempt: complete response.
+    def compact_json(
+        value: Any,
+        max_chars: int = 4000,
+    ) -> str:
         try:
-            return json.loads(text)
+            text = json.dumps(
+                value,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        except Exception:
+            text = str(value)
+
+        return limit_text(text, max_chars)
+
+    def compact_red_team(
+        value: Any,
+        max_chars: int = 5000,
+    ) -> str:
+        return limit_text(value, max_chars)
+
+    def load_prompt(
+        name: str,
+        default: str = "",
+    ) -> str:
+        return default
+
+
+# =====================================================================
+# OPTIONAL GROQ
+# =====================================================================
+
+try:
+    from langchain_groq import ChatGroq
+except Exception:
+    ChatGroq = None
+
+
+# =====================================================================
+# CONSTANTS
+# =====================================================================
+
+DEFAULT_MODEL = "openai/gpt-oss-120b"
+
+SCENARIO_CATEGORIES = [
+    "RESET",
+    "BOUNDARY",
+    "OVERFLOW",
+    "UNDERFLOW",
+    "FSM",
+    "PROTOCOL",
+    "BACK_TO_BACK",
+    "ILLEGAL_INPUT",
+    "X_Z_STATE",
+    "FIFO",
+    "UART",
+    "HANDSHAKE",
+    "TIMING",
+    "CORNER_CASE",
+]
+
+
+# =====================================================================
+# HELPERS
+# =====================================================================
+
+def _safe_state(
+    state: Any,
+) -> Dict[str, Any]:
+    """Convert state into a dictionary."""
+
+    if state is None:
+        return {}
+
+    if isinstance(state, dict):
+        return dict(state)
+
+    try:
+        return dict(state)
+    except Exception:
+        return {}
+
+
+def _clean_text(
+    value: Any,
+) -> str:
+    """Normalize arbitrary value to text."""
+
+    if value is None:
+        return ""
+
+    return str(value).strip()
+
+
+def _extract_json(
+    text: str,
+) -> Any:
+    """
+    Extract JSON from an LLM response.
+
+    Supports:
+    - plain JSON
+    - JSON fenced in ```json
+    - JSON embedded in surrounding text
+    """
+
+    if not text:
+        return None
+
+    text = text.strip()
+
+    # Direct JSON
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+
+    # Markdown code block
+    match = re.search(
+        r"```(?:json)?\s*(.*?)\s*```",
+        text,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+
+    if match:
+        candidate = match.group(1).strip()
+
+        try:
+            return json.loads(candidate)
         except Exception:
             pass
 
-        # Find first JSON object.
-        object_match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+    # Array
+    start = text.find("[")
+    end = text.rfind("]")
 
-        if object_match:
-            candidate = object_match.group(0)
+    if start >= 0 and end > start:
 
-            try:
-                return json.loads(candidate)
-            except Exception:
-                pass
+        candidate = text[start : end + 1]
 
-        # Find first JSON array.
-        array_match = re.search(r"\[.*\]", text, flags=re.DOTALL)
+        try:
+            return json.loads(candidate)
+        except Exception:
+            pass
 
-        if array_match:
-            candidate = array_match.group(0)
+    # Object
+    start = text.find("{")
+    end = text.rfind("}")
 
-            try:
-                return json.loads(candidate)
-            except Exception:
-                pass
+    if start >= 0 and end > start:
 
-        return None
+        candidate = text[start : end + 1]
 
-    @staticmethod
-    def _normalize_severity(value: Any) -> str:
-        value = str(value or "MEDIUM").upper().strip()
+        try:
+            return json.loads(candidate)
+        except Exception:
+            pass
 
-        allowed = {
-            "LOW",
-            "MEDIUM",
-            "HIGH",
-            "CRITICAL",
-        }
+    return None
 
-        if value not in allowed:
-            return "MEDIUM"
 
-        return value
+def _normalize_scenarios(
+    scenarios: Any,
+) -> List[Dict[str, Any]]:
+    """
+    Normalize generated scenarios into a stable schema.
+    """
 
-    @staticmethod
-    def _normalize_category(value: Any) -> str:
-        value = str(value or "CORNER_CASE").upper().strip()
+    if scenarios is None:
+        return []
 
-        allowed = {
-            "BOUNDARY",
-            "RESET",
-            "PROTOCOL",
-            "TIMING",
-            "FSM",
-            "OVERFLOW",
-            "UNDERFLOW",
-            "HANDSHAKE",
-            "WIDTH",
-            "SIGN",
-            "X_PROPAGATION",
-            "ILLEGAL_INPUT",
-            "SEQUENCE",
-            "CONCURRENCY",
-            "STATE",
-            "CORNER_CASE",
-            "FUNCTIONAL",
-            "OTHER",
-        }
+    if isinstance(scenarios, dict):
 
-        if value not in allowed:
-            return "CORNER_CASE"
+        if isinstance(
+            scenarios.get("scenarios"),
+            list,
+        ):
+            scenarios = scenarios["scenarios"]
+        else:
+            scenarios = [scenarios]
 
-        return value
+    if not isinstance(
+        scenarios,
+        list,
+    ):
+        return []
 
-    @staticmethod
-    def _normalize_scenario(
-        scenario: Dict[str, Any],
-        index: int,
-    ) -> Dict[str, Any]:
+    output: List[Dict[str, Any]] = []
+
+    for index, item in enumerate(
+        scenarios,
+        start=1,
+    ):
+
+        if isinstance(
+            item,
+            str,
+        ):
+
+            text = item.strip()
+
+            if not text:
+                continue
+
+            output.append(
+                {
+                    "id": f"RT{index:03d}",
+                    "category": "CORNER_CASE",
+                    "title": text[:120],
+                    "scenario": text,
+                    "stimulus": text,
+                    "expected": "",
+                    "risk": "MEDIUM",
+                    "source": "LLM",
+                }
+            )
+
+            continue
+
+        if not isinstance(
+            item,
+            dict,
+        ):
+            continue
 
         scenario_id = (
-            scenario.get("id")
-            or scenario.get("scenario_id")
+            item.get("id")
+            or item.get("scenario_id")
             or f"RT{index:03d}"
         )
 
-        scenario_id = str(scenario_id).strip()
+        category = (
+            item.get("category")
+            or "CORNER_CASE"
+        )
 
-        # Force consistent IDs.
-        if not re.match(r"^RT\d{3,}$", scenario_id):
-            scenario_id = f"RT{index:03d}"
+        category = str(
+            category
+        ).upper().replace(
+            " ",
+            "_",
+        )
 
-        description = str(
-            scenario.get("description")
-            or scenario.get("scenario")
-            or scenario.get("name")
-            or "Adversarial verification scenario"
-        ).strip()
+        if category not in SCENARIO_CATEGORIES:
+            category = "CORNER_CASE"
 
-        attack = str(
-            scenario.get("attack")
-            or scenario.get("stimulus")
-            or scenario.get("action")
+        title = (
+            item.get("title")
+            or item.get("name")
+            or f"Red-team scenario {index}"
+        )
+
+        scenario = (
+            item.get("scenario")
+            or item.get("description")
+            or item.get("stimulus")
+            or title
+        )
+
+        stimulus = (
+            item.get("stimulus")
+            or scenario
+        )
+
+        expected = (
+            item.get("expected")
+            or item.get("expected_behavior")
             or ""
-        ).strip()
+        )
 
-        expected = str(
-            scenario.get("expected")
-            or scenario.get("expected_behavior")
-            or "Design should reject or correctly handle the adversarial condition."
-        ).strip()
+        risk = (
+            item.get("risk")
+            or item.get("severity")
+            or "MEDIUM"
+        )
 
-        rationale = str(
-            scenario.get("rationale")
-            or scenario.get("reason")
-            or "Targets a potential corner-case weakness."
-        ).strip()
-
-        signals = scenario.get("signals")
-
-        if isinstance(signals, list):
-            signals = [
-                str(item).strip()
-                for item in signals
-                if str(item).strip()
-            ]
-        elif signals:
-            signals = [str(signals).strip()]
-        else:
-            signals = []
-
-        return {
-            "id": scenario_id,
-            "description": description[:300],
-            "category": RedTeamAgent._normalize_category(
-                scenario.get("category")
-            ),
-            "severity": RedTeamAgent._normalize_severity(
-                scenario.get("severity")
-            ),
-            "attack": attack[:500],
-            "expected": expected[:400],
-            "rationale": rationale[:400],
-            "signals": signals[:10],
-            "source": str(
-                scenario.get("source") or "Red Team Agent"
+        normalized = {
+            "id": str(scenario_id),
+            "category": category,
+            "title": str(title),
+            "scenario": str(scenario),
+            "stimulus": str(stimulus),
+            "expected": str(expected),
+            "risk": str(risk).upper(),
+            "source": item.get(
+                "source",
+                "LLM",
             ),
         }
 
-    # ------------------------------------------------------------------
-    # Static adversarial analysis
-    # ------------------------------------------------------------------
+        # Preserve useful extra fields.
+        for key in (
+            "signals",
+            "inputs",
+            "steps",
+            "rationale",
+            "bug_class",
+            "requirement",
+        ):
 
-    def _static_scenarios(
-        self,
-        rtl_code: str,
-        specification: str,
-        rtl_analysis: Dict[str, Any],
-        verification_plan: Dict[str, Any],
-    ) -> List[Dict[str, Any]]:
-        """
-        Generate deterministic adversarial scenarios.
+            if key in item:
+                normalized[key] = item[key]
 
-        These scenarios are intentionally independent of the LLM.
-        This ensures the platform remains useful even when:
-        - API is unavailable
-        - rate limits are reached
-        - malformed JSON is returned
-        """
+        output.append(
+            normalized
+        )
 
-        rtl_lower = rtl_code.lower()
+    # Reassign deterministic IDs if missing/duplicated.
+    seen = set()
 
-        scenarios: List[Dict[str, Any]] = []
+    for index, item in enumerate(
+        output,
+        start=1,
+    ):
 
-        # --------------------------------------------------------------
-        # Reset attacks
-        # --------------------------------------------------------------
+        current_id = str(
+            item.get(
+                "id",
+                "",
+            )
+        )
 
         if (
-            "reset" in rtl_lower
-            or "rst" in rtl_lower
-            or "rst_n" in rtl_lower
+            not current_id
+            or current_id in seen
         ):
-            scenarios.append(
-                {
-                    "id": "RT001",
-                    "description": "Assert reset during an active operation",
-                    "category": "RESET",
-                    "severity": "HIGH",
-                    "attack": (
-                        "Start a normal transaction, then assert reset "
-                        "before the transaction completes."
-                    ),
-                    "expected": (
-                        "All reset-defined state returns to the specified "
-                        "reset condition without corrupt residual state."
-                    ),
-                    "rationale": (
-                        "Mid-transaction reset often exposes state-retention "
-                        "and recovery defects."
-                    ),
-                    "signals": ["reset", "state", "valid", "ready"],
-                }
-            )
 
-            scenarios.append(
-                {
-                    "id": "RT002",
-                    "description": "Deassert reset at an unfavorable clock boundary",
-                    "category": "RESET",
-                    "severity": "HIGH",
-                    "attack": (
-                        "Toggle reset close to a clock edge and immediately "
-                        "issue a transaction."
-                    ),
-                    "expected": (
-                        "The first post-reset transaction behaves according "
-                        "to the reset and synchronization specification."
-                    ),
-                    "rationale": (
-                        "Reset release sequencing can expose initialization "
-                        "and state-machine bugs."
-                    ),
-                    "signals": ["reset", "clk"],
-                }
-            )
+            current_id = f"RT{index:03d}"
 
-        # --------------------------------------------------------------
-        # Boundary attacks
-        # --------------------------------------------------------------
+        seen.add(current_id)
+        item["id"] = current_id
 
-        scenarios.extend(
-            [
-                {
-                    "id": "RT003",
-                    "description": "Drive minimum legal input value",
-                    "category": "BOUNDARY",
-                    "severity": "MEDIUM",
-                    "attack": "Apply the minimum representable legal input.",
-                    "expected": (
-                        "Output matches the specification for the minimum "
-                        "legal input."
-                    ),
-                    "rationale": (
-                        "Minimum-value boundaries frequently expose "
-                        "off-by-one conditions."
-                    ),
-                    "signals": [],
-                },
-                {
-                    "id": "RT004",
-                    "description": "Drive maximum representable input",
-                    "category": "BOUNDARY",
-                    "severity": "HIGH",
-                    "attack": (
-                        "Apply the maximum representable value on relevant "
-                        "data inputs."
-                    ),
-                    "expected": (
-                        "Design produces the specified result without "
-                        "unexpected overflow or truncation."
-                    ),
-                    "rationale": (
-                        "Maximum values expose width, arithmetic and "
-                        "overflow defects."
-                    ),
-                    "signals": [],
-                },
-                {
-                    "id": "RT005",
-                    "description": "Test one-step-around-boundary values",
-                    "category": "BOUNDARY",
-                    "severity": "HIGH",
-                    "attack": (
-                        "Apply values immediately below, at, and above "
-                        "important legal boundaries."
-                    ),
-                    "expected": (
-                        "Boundary transitions follow the specification "
-                        "exactly."
-                    ),
-                    "rationale": (
-                        "Off-by-one errors are often invisible to nominal "
-                        "functional tests."
-                    ),
-                    "signals": [],
-                },
-            ]
+    return output
+
+
+# =====================================================================
+# DETERMINISTIC RED TEAM GENERATOR
+# =====================================================================
+
+def _contains(
+    text: str,
+    *terms: str,
+) -> bool:
+    """Case-insensitive keyword detection."""
+
+    value = text.lower()
+
+    return any(
+        term.lower() in value
+        for term in terms
+    )
+
+
+def generate_deterministic_scenarios(
+    rtl_code: str,
+    specification: str = "",
+    rtl_analysis: Dict[str, Any] | None = None,
+) -> List[Dict[str, Any]]:
+    """
+    Generate deterministic adversarial scenarios.
+
+    This guarantees useful output even when:
+    - Groq is unavailable
+    - API key is absent
+    - LLM call fails
+    """
+
+    rtl = _clean_text(rtl_code)
+    spec = _clean_text(specification)
+
+    analysis_text = ""
+
+    if rtl_analysis:
+        analysis_text = compact_rtl_analysis(
+            rtl_analysis,
+            3000,
         )
 
-        # --------------------------------------------------------------
-        # Width / arithmetic
-        # --------------------------------------------------------------
+    combined = (
+        rtl
+        + "\n"
+        + spec
+        + "\n"
+        + analysis_text
+    )
 
-        if any(
-            keyword in rtl_lower
-            for keyword in [
-                "+",
-                "-",
-                "*",
-                "<<",
-                ">>",
-                "width",
-            ]
-        ):
-            scenarios.extend(
-                [
-                    {
-                        "id": "RT006",
-                        "description": "Attempt arithmetic overflow",
-                        "category": "OVERFLOW",
-                        "severity": "HIGH",
-                        "attack": (
-                            "Drive operands near the maximum value and "
-                            "perform an arithmetic operation."
-                        ),
-                        "expected": (
-                            "Overflow behavior matches the specification."
-                        ),
-                        "rationale": (
-                            "Arithmetic width mismatches can silently "
-                            "truncate significant bits."
-                        ),
-                        "signals": [],
-                    },
-                    {
-                        "id": "RT007",
-                        "description": "Attempt arithmetic underflow",
-                        "category": "UNDERFLOW",
-                        "severity": "HIGH",
-                        "attack": (
-                            "Drive operands near the minimum value and "
-                            "perform a subtractive operation."
-                        ),
-                        "expected": (
-                            "Underflow behavior matches the specification."
-                        ),
-                        "rationale": (
-                            "Signedness and width handling are common "
-                            "RTL failure modes."
-                        ),
-                        "signals": [],
-                    },
-                ]
-            )
+    scenarios: List[Dict[str, Any]] = []
 
-        # --------------------------------------------------------------
-        # FSM attacks
-        # --------------------------------------------------------------
-
-        analysis_text = json.dumps(rtl_analysis).lower()
-
-        if "fsm" in analysis_text or "state" in analysis_text:
-            scenarios.extend(
-                [
-                    {
-                        "id": "RT008",
-                        "description": "Force or reach an illegal FSM state",
-                        "category": "FSM",
-                        "severity": "CRITICAL",
-                        "attack": (
-                            "Attempt to drive the state machine toward an "
-                            "undefined or illegal state."
-                        ),
-                        "expected": (
-                            "The design recovers safely or follows the "
-                            "specified illegal-state behavior."
-                        ),
-                        "rationale": (
-                            "Illegal-state recovery is frequently "
-                            "uncovered by nominal tests."
-                        ),
-                        "signals": ["state"],
-                    },
-                    {
-                        "id": "RT009",
-                        "description": "Apply unexpected transition sequence",
-                        "category": "SEQUENCE",
-                        "severity": "HIGH",
-                        "attack": (
-                            "Issue a control sequence that skips expected "
-                            "intermediate operations."
-                        ),
-                        "expected": (
-                            "The FSM rejects or safely handles the invalid "
-                            "transition."
-                        ),
-                        "rationale": (
-                            "Sequence-sensitive bugs may not appear in "
-                            "single-operation tests."
-                        ),
-                        "signals": ["state"],
-                    },
-                ]
-            )
-
-        # --------------------------------------------------------------
-        # Handshake / protocol
-        # --------------------------------------------------------------
-
-        protocol_keywords = [
-            "valid",
-            "ready",
-            "req",
-            "ack",
-            "enable",
-            "handshake",
-        ]
-
-        if any(keyword in rtl_lower for keyword in protocol_keywords):
-            scenarios.extend(
-                [
-                    {
-                        "id": "RT010",
-                        "description": "Hold valid while ready is low",
-                        "category": "HANDSHAKE",
-                        "severity": "HIGH",
-                        "attack": (
-                            "Assert valid and keep it asserted while "
-                            "ready remains low for multiple cycles."
-                        ),
-                        "expected": (
-                            "Transaction is neither lost nor duplicated; "
-                            "transfer occurs only according to the protocol."
-                        ),
-                        "rationale": (
-                            "Handshake persistence is a common source of "
-                            "data-loss bugs."
-                        ),
-                        "signals": ["valid", "ready"],
-                    },
-                    {
-                        "id": "RT011",
-                        "description": "Back-to-back handshake transactions",
-                        "category": "PROTOCOL",
-                        "severity": "HIGH",
-                        "attack": (
-                            "Issue transactions on consecutive cycles with "
-                            "no idle gap."
-                        ),
-                        "expected": (
-                            "Every accepted transaction is processed exactly "
-                            "once and in the correct order."
-                        ),
-                        "rationale": (
-                            "Back-to-back operation stresses pipeline and "
-                            "handshake assumptions."
-                        ),
-                        "signals": ["valid", "ready"],
-                    },
-                ]
-            )
-
-        # --------------------------------------------------------------
-        # Unknown / illegal input
-        # --------------------------------------------------------------
+    def add(
+        category: str,
+        title: str,
+        scenario: str,
+        stimulus: str,
+        expected: str,
+        risk: str = "HIGH",
+    ) -> None:
 
         scenarios.append(
             {
-                "id": "RT012",
-                "description": "Inject illegal control input",
-                "category": "ILLEGAL_INPUT",
-                "severity": "HIGH",
-                "attack": (
-                    "Drive a control input combination that is outside "
-                    "the documented legal operating space."
-                ),
-                "expected": (
-                    "The design safely rejects, ignores, or handles the "
-                    "illegal combination as specified."
-                ),
-                "rationale": (
-                    "Robust hardware must not rely solely on ideal inputs."
-                ),
-                "signals": [],
+                "id": f"RT{len(scenarios) + 1:03d}",
+                "category": category,
+                "title": title,
+                "scenario": scenario,
+                "stimulus": stimulus,
+                "expected": expected,
+                "risk": risk,
+                "source": "DETERMINISTIC",
             }
         )
 
-        scenarios.append(
-            {
-                "id": "RT013",
-                "description": "Check unknown-value propagation",
-                "category": "X_PROPAGATION",
-                "severity": "HIGH",
-                "attack": (
-                    "Introduce X/Z conditions where the simulator permits "
-                    "them and observe dependent outputs."
-                ),
-                "expected": (
-                    "Unknown-state behavior is consistent with the "
-                    "verification assumptions and RTL intent."
-                ),
-                "rationale": (
-                    "X propagation can hide initialization and control bugs."
-                ),
-                "signals": [],
-            }
+    # -------------------------------------------------------------
+    # Reset
+    # -------------------------------------------------------------
+
+    if _contains(
+        combined,
+        "reset",
+        "rst",
+        "reset_n",
+    ):
+
+        add(
+            "RESET",
+            "Reset during active operation",
+            (
+                "Assert reset while the design is processing "
+                "an active transaction."
+            ),
+            (
+                "Start a transaction, assert reset before completion, "
+                "then release reset."
+            ),
+            (
+                "All state-dependent outputs should return to the "
+                "specified reset state without stale transaction data."
+            ),
         )
 
-        # --------------------------------------------------------------
-        # Repeated operations
-        # --------------------------------------------------------------
-
-        scenarios.append(
-            {
-                "id": "RT014",
-                "description": "Stress repeated identical operations",
-                "category": "SEQUENCE",
-                "severity": "MEDIUM",
-                "attack": (
-                    "Repeat the same operation many times without idle "
-                    "cycles where the interface permits it."
-                ),
-                "expected": (
-                    "State and outputs remain correct across all repetitions."
-                ),
-                "rationale": (
-                    "Repeated operations expose counters, state retention "
-                    "and resource-release problems."
-                ),
-                "signals": [],
-            }
+        add(
+            "RESET",
+            "Reset release boundary",
+            (
+                "Release reset immediately before or after a clock "
+                "edge and verify deterministic behavior."
+            ),
+            (
+                "Toggle reset around consecutive clock edges."
+            ),
+            (
+                "The first post-reset behavior must comply with the "
+                "specified synchronous/asynchronous reset semantics."
+            ),
+            "MEDIUM",
         )
 
-        # --------------------------------------------------------------
-        # Specification-derived scenario
-        # --------------------------------------------------------------
+    # -------------------------------------------------------------
+    # Boundary values
+    # -------------------------------------------------------------
 
-        if specification:
-            spec_lower = specification.lower()
+    add(
+        "BOUNDARY",
+        "Minimum input value",
+        "Drive the minimum legal input values.",
+        "Apply all-zero or minimum-width values.",
+        "Outputs and state must match the specification.",
+        "MEDIUM",
+    )
 
-            if "fifo" in spec_lower:
-                scenarios.extend(
-                    [
-                        {
-                            "id": "RT015",
-                            "description": "Write FIFO until full",
-                            "category": "BOUNDARY",
-                            "severity": "CRITICAL",
-                            "attack": (
-                                "Fill the FIFO to capacity and attempt "
-                                "one additional write."
-                            ),
-                            "expected": (
-                                "Full behavior and overflow protection "
-                                "match the specification."
-                            ),
-                            "rationale": (
-                                "FIFO full-boundary behavior is a critical "
-                                "verification point."
-                            ),
-                            "signals": ["full", "write", "ready"],
-                        },
-                        {
-                            "id": "RT016",
-                            "description": "Read FIFO until empty",
-                            "category": "BOUNDARY",
-                            "severity": "CRITICAL",
-                            "attack": (
-                                "Drain the FIFO completely and attempt "
-                                "one additional read."
-                            ),
-                            "expected": (
-                                "Empty behavior and underflow protection "
-                                "match the specification."
-                            ),
-                            "rationale": (
-                                "FIFO empty-boundary behavior can cause "
-                                "data corruption."
-                            ),
-                            "signals": ["empty", "read", "valid"],
-                        },
-                    ]
+    add(
+        "BOUNDARY",
+        "Maximum input value",
+        "Drive the maximum representable legal values.",
+        "Apply all-one values for relevant input widths.",
+        "No unintended truncation or incorrect behavior.",
+        "HIGH",
+    )
+
+    # -------------------------------------------------------------
+    # Overflow / underflow
+    # -------------------------------------------------------------
+
+    if _contains(
+        combined,
+        "+",
+        "add",
+        "increment",
+        "counter",
+        "overflow",
+    ):
+
+        add(
+            "OVERFLOW",
+            "Arithmetic overflow boundary",
+            (
+                "Exercise the largest representable value followed "
+                "by another increment."
+            ),
+            (
+                "Drive maximum value and perform increment/add operation."
+            ),
+            (
+                "Overflow behavior must exactly match the specification."
+            ),
+        )
+
+    if _contains(
+        combined,
+        "-",
+        "sub",
+        "subtract",
+        "decrement",
+        "underflow",
+    ):
+
+        add(
+            "UNDERFLOW",
+            "Arithmetic underflow boundary",
+            (
+                "Exercise the smallest representable value followed "
+                "by decrement/subtraction."
+            ),
+            (
+                "Drive minimum value and perform decrement/subtraction."
+            ),
+            (
+                "Underflow behavior must exactly match the specification."
+            ),
+        )
+
+    # -------------------------------------------------------------
+    # Back-to-back operations
+    # -------------------------------------------------------------
+
+    add(
+        "BACK_TO_BACK",
+        "Back-to-back transactions",
+        (
+            "Perform transactions on consecutive cycles without "
+            "idle gaps."
+        ),
+        (
+            "Issue valid transactions on adjacent clock cycles."
+        ),
+        (
+            "Every transaction should be accepted and produce the "
+            "correct result."
+        ),
+    )
+
+    # -------------------------------------------------------------
+    # Idle behavior
+    # -------------------------------------------------------------
+
+    add(
+        "CORNER_CASE",
+        "Idle stability",
+        (
+            "Hold inputs idle for multiple cycles and verify that "
+            "outputs/state do not change unexpectedly."
+        ),
+        (
+            "Drive stable idle inputs for 5-10 clock cycles."
+        ),
+        (
+            "State and outputs remain stable unless the specification "
+            "explicitly permits changes."
+        ),
+        "MEDIUM",
+    )
+
+    # -------------------------------------------------------------
+    # FSM
+    # -------------------------------------------------------------
+
+    if _contains(
+        combined,
+        "state",
+        "fsm",
+        "case",
+        "always_ff",
+        "always @(posedge",
+    ):
+
+        add(
+            "FSM",
+            "Unexpected FSM transition",
+            (
+                "Exercise every legal transition and attempt boundary "
+                "conditions around state changes."
+            ),
+            (
+                "Drive inputs immediately before and after expected "
+                "state transitions."
+            ),
+            (
+                "FSM remains within legal states and transitions."
+            ),
+        )
+
+        add(
+            "FSM",
+            "Illegal state recovery",
+            (
+                "Evaluate behavior if the FSM enters an unsupported "
+                "or default state."
+            ),
+            (
+                "Use reset/recovery conditions or simulation force "
+                "where practical."
+            ),
+            (
+                "Design reaches a safe deterministic state."
+            ),
+            "MEDIUM",
+        )
+
+    # -------------------------------------------------------------
+    # Protocol
+    # -------------------------------------------------------------
+
+    if _contains(
+        combined,
+        "valid",
+        "ready",
+        "handshake",
+        "req",
+        "ack",
+    ):
+
+        add(
+            "HANDSHAKE",
+            "Valid held while not ready",
+            (
+                "Keep a request or valid indication asserted while "
+                "the receiver is unavailable."
+            ),
+            (
+                "Assert valid/request and delay ready/ack."
+            ),
+            (
+                "The transaction must not be lost or duplicated."
+            ),
+        )
+
+        add(
+            "HANDSHAKE",
+            "Back-to-back handshake",
+            (
+                "Complete multiple handshakes on consecutive cycles."
+            ),
+            (
+                "Assert valid for consecutive transfers."
+            ),
+            (
+                "Each accepted transfer produces exactly one result."
+            ),
+        )
+
+    # -------------------------------------------------------------
+    # FIFO
+    # -------------------------------------------------------------
+
+    if _contains(
+        combined,
+        "fifo",
+        "full",
+        "empty",
+        "wr_ptr",
+        "rd_ptr",
+    ):
+
+        add(
+            "FIFO",
+            "Write when full",
+            (
+                "Attempt a write when FIFO occupancy reaches capacity."
+            ),
+            (
+                "Fill FIFO completely, then assert write enable."
+            ),
+            (
+                "No illegal overwrite occurs and full behavior "
+                "matches the specification."
+            ),
+        )
+
+        add(
+            "FIFO",
+            "Read when empty",
+            (
+                "Attempt a read while FIFO contains no valid data."
+            ),
+            (
+                "Reset/drain FIFO, then assert read enable."
+            ),
+            (
+                "No invalid data is consumed and empty behavior "
+                "matches the specification."
+            ),
+        )
+
+        add(
+            "FIFO",
+            "Full-to-read boundary",
+            (
+                "Read immediately after FIFO reaches full capacity."
+            ),
+            (
+                "Fill FIFO, then read one item."
+            ),
+            (
+                "Full flag and occupancy update correctly."
+            ),
+        )
+
+    # -------------------------------------------------------------
+    # UART
+    # -------------------------------------------------------------
+
+    if _contains(
+        combined,
+        "uart",
+        "baud",
+        "tx",
+        "serial",
+        "start bit",
+        "stop bit",
+    ):
+
+        add(
+            "UART",
+            "UART framing boundary",
+            (
+                "Verify exact start, data and stop bit sequencing."
+            ),
+            (
+                "Transmit alternating and all-zero/all-one data patterns."
+            ),
+            (
+                "Frame contains exactly one start bit, eight data bits "
+                "and the specified stop bit."
+            ),
+        )
+
+        add(
+            "UART",
+            "UART back-to-back transmission",
+            (
+                "Start a second transmission immediately after "
+                "completion of the first."
+            ),
+            (
+                "Transmit two different bytes with minimal idle time."
+            ),
+            (
+                "Both frames are complete and correctly separated."
+            ),
+        )
+
+        add(
+            "TIMING",
+            "UART bit timing boundary",
+            (
+                "Check output transitions exactly at the configured "
+                "bit-period boundaries."
+            ),
+            (
+                "Sample TX at every clock within a bit period."
+            ),
+            (
+                "TX remains stable within each bit period and changes "
+                "only at valid boundaries."
+            ),
+        )
+
+    # -------------------------------------------------------------
+    # X/Z
+    # -------------------------------------------------------------
+
+    add(
+        "X_Z_STATE",
+        "Unknown input robustness",
+        (
+            "Where simulator semantics permit, evaluate behavior "
+            "with unknown or high-impedance control signals."
+        ),
+        (
+            "Drive X/Z on non-critical inputs during simulation."
+        ),
+        (
+            "No unintended optimistic behavior or unsafe state "
+            "transition occurs."
+        ),
+        "MEDIUM",
+    )
+
+    # -------------------------------------------------------------
+    # Width / signedness
+    # -------------------------------------------------------------
+
+    if _contains(
+        combined,
+        "[",
+        "width",
+        "parameter",
+        "logic",
+        "reg",
+        "wire",
+    ):
+
+        add(
+            "BOUNDARY",
+            "Width truncation boundary",
+            (
+                "Exercise values where arithmetic results require "
+                "more bits than the destination."
+            ),
+            (
+                "Apply maximum-width operands and inspect every "
+                "destination bit."
+            ),
+            (
+                "Any truncation must be intentional and specified."
+            ),
+        )
+
+    # -------------------------------------------------------------
+    # Illegal inputs
+    # -------------------------------------------------------------
+
+    add(
+        "ILLEGAL_INPUT",
+        "Illegal control combination",
+        (
+            "Drive combinations of control signals that are normally "
+            "discouraged or unsupported."
+        ),
+        (
+            "Assert multiple mutually exclusive controls together."
+        ),
+        (
+            "Design follows specified priority/default behavior and "
+            "does not enter an unsafe state."
+        ),
+        "MEDIUM",
+    )
+
+    # -------------------------------------------------------------
+    # Ensure minimum diversity
+    # -------------------------------------------------------------
+
+    required_categories = {
+        "RESET",
+        "BOUNDARY",
+        "BACK_TO_BACK",
+        "CORNER_CASE",
+    }
+
+    existing = {
+        str(
+            item.get(
+                "category",
+                "",
+            )
+        ).upper()
+        for item in scenarios
+    }
+
+    # These are normally already present, but guarantee them.
+    if "RESET" not in existing:
+
+        add(
+            "RESET",
+            "Basic reset robustness",
+            "Apply and release reset while observing all outputs.",
+            "Assert reset, hold for several cycles, then release.",
+            "Outputs return to defined reset state.",
+            "HIGH",
+        )
+
+    # -------------------------------------------------------------
+    # Deduplicate
+    # -------------------------------------------------------------
+
+    unique: List[Dict[str, Any]] = []
+    fingerprints = set()
+
+    for item in scenarios:
+
+        fingerprint = (
+            str(
+                item.get(
+                    "category",
+                    "",
+                )
+            ).lower(),
+            str(
+                item.get(
+                    "title",
+                    "",
+                )
+            ).lower(),
+        )
+
+        if fingerprint in fingerprints:
+            continue
+
+        fingerprints.add(
+            fingerprint
+        )
+
+        unique.append(item)
+
+    # Re-number
+    for index, item in enumerate(
+        unique,
+        start=1,
+    ):
+        item["id"] = f"RT{index:03d}"
+
+    return unique
+
+
+# =====================================================================
+# AGENT
+# =====================================================================
+
+class RedTeamAgent:
+    """
+    Adversarial verification scenario generator.
+    """
+
+    name = "red_team_agent"
+
+    def __init__(
+        self,
+        model: str = DEFAULT_MODEL,
+        temperature: float = 0.1,
+        max_tokens: int = 1800,
+    ) -> None:
+
+        self.model = model
+        self.temperature = temperature
+        self.max_tokens = max_tokens
+
+        self.llm = None
+
+        # -------------------------------------------------------------
+        # Optional Groq initialization
+        # -------------------------------------------------------------
+
+        if ChatGroq is not None:
+
+            try:
+
+                import os
+
+                api_key = os.getenv(
+                    "GROQ_API_KEY"
                 )
 
-            if "counter" in spec_lower:
-                scenarios.append(
-                    {
-                        "id": "RT017",
-                        "description": "Force counter wraparound",
-                        "category": "OVERFLOW",
-                        "severity": "HIGH",
-                        "attack": (
-                            "Drive the counter to its maximum and apply "
-                            "one additional increment."
-                        ),
-                        "expected": (
-                            "Wraparound, saturation, or error behavior "
-                            "matches the specification."
-                        ),
-                        "rationale": (
-                            "Counter rollover is a classic corner case."
-                        ),
-                        "signals": ["count"],
-                    }
-                )
+                if api_key:
 
-            if "uart" in spec_lower:
-                scenarios.append(
-                    {
-                        "id": "RT018",
-                        "description": "Exercise UART framing boundary",
-                        "category": "PROTOCOL",
-                        "severity": "HIGH",
-                        "attack": (
-                            "Transmit data with boundary timing and "
-                            "back-to-back frames."
-                        ),
-                        "expected": (
-                            "Start, data, parity and stop handling remain "
-                            "protocol compliant."
-                        ),
-                        "rationale": (
-                            "UART bugs frequently occur at frame boundaries."
-                        ),
-                        "signals": ["tx", "rx"],
-                    }
-                )
+                    self.llm = ChatGroq(
+                        model=self.model,
+                        temperature=self.temperature,
+                        max_tokens=self.max_tokens,
+                    )
 
-        # Limit deterministic scenarios.
-        return scenarios[:20]
+            except Exception:
 
-    # ------------------------------------------------------------------
-    # LLM invocation
-    # ------------------------------------------------------------------
+                self.llm = None
 
-    def _build_messages(
+    # -----------------------------------------------------------------
+    # LLM GENERATION
+    # -----------------------------------------------------------------
+
+    def _generate_with_llm(
         self,
         rtl_code: str,
         specification: str,
         rtl_analysis: Dict[str, Any],
-        verification_plan: Dict[str, Any],
-        coverage: Dict[str, Any],
-        existing_tests: List[Dict[str, Any]],
-        failure_analysis: Dict[str, Any],
-    ) -> List[Any]:
-
-        system_prompt = load_prompt("red_team")
-
-        if not system_prompt:
-            system_prompt = """
-You are an expert semiconductor RTL verification red-team engineer.
-
-Find adversarial verification scenarios that can expose RTL bugs.
-
-Focus on:
-- boundary conditions
-- reset
-- illegal inputs
-- protocol violations
-- timing
-- FSM transitions
-- overflow/underflow
-- width/sign errors
-- X/Z behavior
-- repeated and back-to-back operations
-- corner-case sequences
-
-Return ONLY compact JSON.
-
-Schema:
-{
-  "scenarios": [
-    {
-      "id": "RT001",
-      "description": "...",
-      "category": "BOUNDARY",
-      "severity": "HIGH",
-      "attack": "...",
-      "expected": "...",
-      "rationale": "...",
-      "signals": ["..."]
-    }
-  ]
-}
-
-Maximum 10 scenarios.
-"""
-
-        user_payload = {
-            "specification": limit_text(specification, 2500),
-            "rtl": compact_rtl(rtl_code, 6000),
-            "rtl_analysis": compact_rtl_analysis(rtl_analysis),
-            "verification_plan": compact_json(
-                verification_plan,
-                3000,
-            ),
-            "coverage": compact_json(
-                coverage,
-                2000,
-            ),
-            "existing_tests": compact_red_team(
-                existing_tests,
-                2500,
-            ),
-            "failure_analysis": compact_json(
-                failure_analysis,
-                1800,
-            ),
-        }
-
-        return [
-            SystemMessage(content=system_prompt),
-            HumanMessage(
-                content=(
-                    "Generate adversarial RTL verification scenarios.\n\n"
-                    + compact_json(user_payload, 12000)
-                )
-            ),
-        ]
-
-    def _call_llm(
-        self,
-        messages: List[Any],
-    ) -> Optional[Any]:
-
-        if not self.llm:
-            return None
-
-        try:
-            response = self.llm.invoke(messages)
-
-            content = getattr(response, "content", "")
-
-            if isinstance(content, list):
-                content = "".join(
-                    str(item)
-                    for item in content
-                )
-
-            return self._safe_json(str(content))
-
-        except Exception:
-            # Deliberately return None.
-            #
-            # The caller falls back to deterministic scenarios.
-            # This prevents the verification workflow from failing
-            # simply because the AI service is unavailable.
-            return None
-
-    # ------------------------------------------------------------------
-    # Merge / deduplicate
-    # ------------------------------------------------------------------
-
-    def _merge_scenarios(
-        self,
-        static_scenarios: List[Dict[str, Any]],
-        ai_scenarios: Optional[Any],
+        baseline: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
 
-        candidates: List[Dict[str, Any]] = []
+        if self.llm is None:
+            return []
 
-        candidates.extend(static_scenarios)
+        system_prompt = load_prompt(
+            "red_team",
+            default=(
+                "You are an expert RTL verification engineer. "
+                "Generate concise adversarial verification scenarios."
+            ),
+        )
 
-        if isinstance(ai_scenarios, dict):
-            ai_scenarios = (
-                ai_scenarios.get("scenarios")
-                or ai_scenarios.get("red_team_scenarios")
-                or []
+        prompt = f"""
+Generate adversarial RTL verification scenarios.
+
+Return ONLY valid JSON.
+
+Required format:
+
+[
+  {{
+    "id": "RT001",
+    "category": "RESET",
+    "title": "Short title",
+    "scenario": "What adversarial condition is tested",
+    "stimulus": "How the test should stimulate the DUT",
+    "expected": "Expected correct behavior",
+    "risk": "HIGH"
+  }}
+]
+
+Rules:
+- Generate 5 to 10 high-value scenarios.
+- Focus on corner cases and failure modes.
+- Avoid duplicating obvious baseline tests.
+- Include reset/boundary/protocol/FSM cases when relevant.
+- Do not invent ports that are clearly absent.
+- Keep each scenario concise.
+- Do not include markdown.
+
+Specification:
+{limit_text(specification, 3500)}
+
+RTL:
+{compact_rtl(rtl_code, 5000)}
+
+RTL Analysis:
+{compact_rtl_analysis(rtl_analysis, 2500)}
+
+Existing deterministic scenarios:
+{compact_json(baseline, 2500)}
+"""
+
+        try:
+
+            response = self.llm.invoke(
+                [
+                    (
+                        "system",
+                        system_prompt,
+                    ),
+                    (
+                        "human",
+                        prompt,
+                    ),
+                ]
             )
 
-        if isinstance(ai_scenarios, list):
-            candidates.extend(
-                item
-                for item in ai_scenarios
-                if isinstance(item, dict)
+            text = getattr(
+                response,
+                "content",
+                str(response),
             )
 
-        normalized: List[Dict[str, Any]] = []
-        seen_descriptions = set()
-
-        for index, item in enumerate(candidates, start=1):
-
-            scenario = self._normalize_scenario(
-                item,
-                index,
+            parsed = _extract_json(
+                str(text)
             )
 
-            key = re.sub(
-                r"\s+",
-                " ",
-                scenario["description"].lower(),
-            ).strip()
+            return _normalize_scenarios(
+                parsed
+            )
 
-            if not key:
-                continue
+        except Exception:
 
-            if key in seen_descriptions:
-                continue
+            return []
 
-            seen_descriptions.add(key)
-
-            normalized.append(scenario)
-
-        # Re-number IDs so there are no collisions between
-        # deterministic and AI-generated scenarios.
-        final: List[Dict[str, Any]] = []
-
-        for index, scenario in enumerate(normalized, start=1):
-            scenario["id"] = f"RT{index:03d}"
-            final.append(scenario)
-
-            if len(final) >= 20:
-                break
-
-        return final
-
-    # ------------------------------------------------------------------
-    # Public execution
-    # ------------------------------------------------------------------
+    # -----------------------------------------------------------------
+    # MAIN RUN
+    # -----------------------------------------------------------------
 
     def run(
         self,
         state: Dict[str, Any],
     ) -> Dict[str, Any]:
 
-        start_time = datetime.utcnow()
-
-        rtl_code = str(
-            state.get("rtl_code")
-            or ""
+        data = _safe_state(
+            state
         )
 
-        specification = str(
-            state.get("specification")
-            or state.get("prompt")
-            or ""
+        rtl_code = _clean_text(
+            data.get(
+                "rtl_code",
+                "",
+            )
         )
 
-        rtl_analysis = (
-            state.get("rtl_analysis")
-            if isinstance(state.get("rtl_analysis"), dict)
-            else {}
+        specification = _clean_text(
+            data.get(
+                "specification",
+                data.get(
+                    "prompt",
+                    "",
+                ),
+            )
         )
 
-        verification_plan = (
-            state.get("verification_plan")
-            if isinstance(state.get("verification_plan"), dict)
-            else {}
+        rtl_analysis = data.get(
+            "rtl_analysis",
+            {},
         )
 
-        coverage = (
-            state.get("coverage")
-            if isinstance(state.get("coverage"), dict)
-            else {}
-        )
+        if not isinstance(
+            rtl_analysis,
+            dict,
+        ):
+            rtl_analysis = {}
 
-        existing_tests = (
-            state.get("tests")
-            if isinstance(state.get("tests"), list)
-            else []
-        )
+        # -------------------------------------------------------------
+        # Deterministic baseline
+        # -------------------------------------------------------------
 
-        failure_analysis = (
-            state.get("failure_analysis")
-            if isinstance(state.get("failure_analysis"), dict)
-            else {}
-        )
-
-        # --------------------------------------------------------------
-        # Static scenarios
-        # --------------------------------------------------------------
-
-        static_scenarios = self._static_scenarios(
-            rtl_code=rtl_code,
-            specification=specification,
-            rtl_analysis=rtl_analysis,
-            verification_plan=verification_plan,
-        )
-
-        # --------------------------------------------------------------
-        # AI scenarios
-        # --------------------------------------------------------------
-
-        ai_result = None
-
-        if self.llm and rtl_code:
-
-            messages = self._build_messages(
+        deterministic = (
+            generate_deterministic_scenarios(
                 rtl_code=rtl_code,
                 specification=specification,
                 rtl_analysis=rtl_analysis,
-                verification_plan=verification_plan,
-                coverage=coverage,
-                existing_tests=existing_tests,
-                failure_analysis=failure_analysis,
             )
+        )
 
-            ai_result = self._call_llm(messages)
+        # -------------------------------------------------------------
+        # Optional LLM enhancement
+        # -------------------------------------------------------------
 
-        # --------------------------------------------------------------
+        llm_scenarios = self._generate_with_llm(
+            rtl_code=rtl_code,
+            specification=specification,
+            rtl_analysis=rtl_analysis,
+            baseline=deterministic,
+        )
+
+        # -------------------------------------------------------------
         # Merge
-        # --------------------------------------------------------------
+        # -------------------------------------------------------------
 
-        scenarios = self._merge_scenarios(
-            static_scenarios,
-            ai_result,
-        )
+        merged: List[Dict[str, Any]] = []
 
-        elapsed = (
-            datetime.utcnow() - start_time
-        ).total_seconds()
+        fingerprints = set()
 
-        status = "COMPLETED"
+        for item in (
+            deterministic
+            + llm_scenarios
+        ):
 
-        if not scenarios:
-            status = "COMPLETED_WITH_WARNING"
+            category = str(
+                item.get(
+                    "category",
+                    "",
+                )
+            ).upper()
 
-        message = (
-            f"Generated {len(scenarios)} adversarial verification "
-            f"scenarios in {elapsed:.2f}s."
-        )
+            title = str(
+                item.get(
+                    "title",
+                    "",
+                )
+            ).strip().lower()
 
-        if ai_result is None and self.llm:
-            message += (
-                " AI generation unavailable; deterministic red-team "
-                "scenarios were used."
+            fingerprint = (
+                category,
+                title,
             )
 
-        elif not self.llm:
-            message += (
-                " Groq is not configured; deterministic scenarios "
-                "were used."
+            if fingerprint in fingerprints:
+                continue
+
+            fingerprints.add(
+                fingerprint
             )
 
-        trace_entry = {
-            "agent": self.AGENT_NAME,
-            "status": status,
-            "timestamp": self._timestamp(),
-            "message": message,
-            "duration_seconds": round(elapsed, 3),
-            "scenario_count": len(scenarios),
-        }
+            merged.append(
+                dict(item)
+            )
 
-        agent_log_entry = {
-            "agent": self.AGENT_NAME,
-            "timestamp": self._timestamp(),
-            "status": status,
-            "input_summary": {
-                "rtl_length": len(rtl_code),
-                "specification_length": len(specification),
-                "existing_test_count": len(existing_tests),
-            },
-            "output_summary": {
-                "scenario_count": len(scenarios),
-                "high_severity": sum(
-                    1
-                    for s in scenarios
-                    if s["severity"] in {"HIGH", "CRITICAL"}
+        # Limit excessive output.
+        merged = merged[:40]
+
+        # Reassign IDs.
+        for index, item in enumerate(
+            merged,
+            start=1,
+        ):
+
+            item["id"] = f"RT{index:03d}"
+
+        # -------------------------------------------------------------
+        # Trace
+        # -------------------------------------------------------------
+
+        trace = list(
+            data.get(
+                "agent_trace",
+                [],
+            )
+            or []
+        )
+
+        trace.append(
+            {
+                "agent": self.name,
+                "status": "completed",
+                "scenario_count": len(
+                    merged
                 ),
-            },
-            "duration_seconds": round(elapsed, 3),
-        }
+                "deterministic_count": len(
+                    deterministic
+                ),
+                "llm_count": len(
+                    llm_scenarios
+                ),
+            }
+        )
+
+        # -------------------------------------------------------------
+        # Agent log
+        # -------------------------------------------------------------
+
+        agent_log = list(
+            data.get(
+                "agent_log",
+                [],
+            )
+            or []
+        )
+
+        agent_log.append(
+            {
+                "agent": self.name,
+                "event": "red_team_generation",
+                "scenario_count": len(
+                    merged
+                ),
+                "llm_used": bool(
+                    llm_scenarios
+                ),
+            }
+        )
+
+        # -------------------------------------------------------------
+        # Return state update
+        # -------------------------------------------------------------
 
         return {
-            "red_team_scenarios": scenarios,
-            "agent_log": (
-                list(state.get("agent_log") or [])
-                + [agent_log_entry]
-            ),
-            "agent_trace": (
-                list(state.get("agent_trace") or [])
-                + [trace_entry]
-            ),
-            "messages": (
-                list(state.get("messages") or [])
-                + [message]
-            ),
-            "warnings": (
-                list(state.get("warnings") or [])
-                + (
-                    [
-                        "Red Team Agent used deterministic fallback "
-                        "because LLM generation was unavailable."
-                    ]
-                    if ai_result is None
-                    else []
-                )
-            ),
-            "status": status,
+            "red_team_scenarios": merged,
+            "agent_trace": trace,
+            "agent_log": agent_log,
+            "status": "RED_TEAM_COMPLETE",
+            "next_action": "mutation",
         }
 
-    # ------------------------------------------------------------------
-    # LangGraph node interface
-    # ------------------------------------------------------------------
 
-    def __call__(
-        self,
-        state: Dict[str, Any],
-    ) -> Dict[str, Any]:
+# =====================================================================
+# COMPATIBILITY HELPERS
+# =====================================================================
 
-        return self.run(state)
-
-
-# ----------------------------------------------------------------------
-# Convenience function
-# ----------------------------------------------------------------------
-
-def run_red_team_agent(
+def run_red_team(
     state: Dict[str, Any],
 ) -> Dict[str, Any]:
     """
-    Convenience wrapper for LangGraph or direct execution.
+    Functional helper for callers that don't instantiate the agent.
     """
 
-    agent = RedTeamAgent()
-
-    return agent.run(state)
+    return RedTeamAgent().run(
+        state
+    )
 
 
 __all__ = [
     "RedTeamAgent",
-    "run_red_team_agent",
+    "run_red_team",
+    "generate_deterministic_scenarios",
+    "SCENARIO_CATEGORIES",
 ]
+
