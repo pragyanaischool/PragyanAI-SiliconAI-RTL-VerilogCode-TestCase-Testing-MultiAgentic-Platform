@@ -1,0 +1,17 @@
+# Python / Cache
+__pycache__/
+*.py[cod]
+.env
+venv/
+.venv/
+
+# Streamlit local secrets
+.streamlit/secrets.toml
+
+# Local Simulation and RTL artifacts
+sim_build/
+*.vcd
+*.fst
+design.v
+test_design.py
+run_sim.py
