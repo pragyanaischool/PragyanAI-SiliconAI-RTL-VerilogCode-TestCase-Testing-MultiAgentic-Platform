@@ -71,7 +71,7 @@ class RTLState(TypedDict):
     status: str
 
 # Initialize Groq LLM
-llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.1, api_key=groq_api_key)
+llm = ChatGroq(model="openai/gpt-oss-120b", temperature=0.1, api_key=groq_api_key)
 
 # -----------------------------------------------------------------------------
 # Agent Nodes Definition
