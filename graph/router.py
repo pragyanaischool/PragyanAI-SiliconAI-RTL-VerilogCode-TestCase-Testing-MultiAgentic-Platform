@@ -4,11 +4,21 @@ Agentic RTL Verification Router
 
 IMPORTANT
 ---------
-ALL workflow routing decisions live in this file.
+This file is the SINGLE SOURCE OF TRUTH for workflow routing.
 
-graph/workflow.py only connects LangGraph nodes to these functions.
+DO NOT import graph.router from this file.
 
-DO NOT import graph.router from graph.router.
+graph/workflow.py:
+    - creates LangGraph
+    - registers nodes
+    - connects conditional edges
+    - delegates decisions to this file
+
+graph/state.py:
+    - defines shared VerificationState
+
+This file:
+    - decides where the workflow goes next
 """
 
 from __future__ import annotations
@@ -17,7 +27,7 @@ from typing import Any, Dict, Optional
 
 
 # =============================================================================
-# Router constants
+# ROUTER CONSTANTS
 # =============================================================================
 
 END = "end"
@@ -42,14 +52,13 @@ JUDGE = "judge"
 
 
 # =============================================================================
-# Helpers
+# SAFE HELPERS
 # =============================================================================
 
 def _safe_int(
     value: Any,
     default: int = 0,
 ) -> int:
-
     try:
         return int(value)
     except (TypeError, ValueError):
@@ -60,7 +69,6 @@ def _safe_float(
     value: Any,
     default: float = 0.0,
 ) -> float:
-
     try:
         return float(value)
     except (TypeError, ValueError):
@@ -86,6 +94,7 @@ def _safe_bool(
             "true",
             "1",
             "yes",
+            "y",
             "on",
             "pass",
             "passed",
@@ -96,6 +105,7 @@ def _safe_bool(
             "false",
             "0",
             "no",
+            "n",
             "off",
             "fail",
             "failed",
@@ -105,9 +115,16 @@ def _safe_bool(
     return bool(value)
 
 
-def _iteration(
-    state: Dict[str, Any],
+# =============================================================================
+# ITERATION
+# =============================================================================
+
+def get_iteration(
+    state: Optional[Dict[str, Any]],
 ) -> int:
+
+    if not state:
+        return 0
 
     return max(
         0,
@@ -118,9 +135,12 @@ def _iteration(
     )
 
 
-def _max_iterations(
-    state: Dict[str, Any],
+def get_max_iterations(
+    state: Optional[Dict[str, Any]],
 ) -> int:
+
+    if not state:
+        return 3
 
     value = _safe_int(
         state.get(
@@ -137,25 +157,29 @@ def _max_iterations(
 
 
 def iteration_limit_reached(
-    state: Dict[str, Any],
+    state: Optional[Dict[str, Any]],
 ) -> bool:
 
     return (
-        _iteration(state)
-        >= _max_iterations(state)
+        get_iteration(state)
+        >= get_max_iterations(state)
     )
 
 
-def _normalize_verdict(
+# =============================================================================
+# VERDICT
+# =============================================================================
+
+def normalize_verdict(
     value: Any,
 ) -> str:
 
     if value is None:
         return "UNKNOWN"
 
-    value = str(value).strip().upper()
+    text = str(value).strip().upper()
 
-    if value in {
+    if text in {
         "PASS",
         "PASSED",
         "SUCCESS",
@@ -164,16 +188,17 @@ def _normalize_verdict(
     }:
         return "PASS"
 
-    if value in {
+    if text in {
         "FAIL",
         "FAILED",
         "ERROR",
+        "REJECT",
         "REJECTED",
         "VERIFICATION FAILED",
     }:
         return "FAIL"
 
-    if value in {
+    if text in {
         "NEED_MORE",
         "NEED MORE",
         "RETRY",
@@ -186,9 +211,13 @@ def _normalize_verdict(
     return "UNKNOWN"
 
 
-def _get_judge_verdict(
+def get_judge_verdict(
     state: Dict[str, Any],
 ) -> str:
+
+    # -------------------------------------------------------------------------
+    # Direct state fields
+    # -------------------------------------------------------------------------
 
     for key in (
         "final_verdict",
@@ -199,12 +228,16 @@ def _get_judge_verdict(
 
         if value:
 
-            verdict = _normalize_verdict(
+            result = normalize_verdict(
                 value
             )
 
-            if verdict != "UNKNOWN":
-                return verdict
+            if result != "UNKNOWN":
+                return result
+
+    # -------------------------------------------------------------------------
+    # judge_result
+    # -------------------------------------------------------------------------
 
     for container_key in (
         "judge_result",
@@ -215,7 +248,10 @@ def _get_judge_verdict(
             container_key
         )
 
-        if not isinstance(result, dict):
+        if not isinstance(
+            result,
+            dict,
+        ):
             continue
 
         for key in (
@@ -225,7 +261,7 @@ def _get_judge_verdict(
             "result",
         ):
 
-            verdict = _normalize_verdict(
+            verdict = normalize_verdict(
                 result.get(key)
             )
 
@@ -235,10 +271,70 @@ def _get_judge_verdict(
     return "UNKNOWN"
 
 
-def _coverage_score(
+# =============================================================================
+# SIMULATION
+# =============================================================================
+
+def simulation_passed(
+    state: Dict[str, Any],
+) -> bool:
+
+    # Primary field.
+    if "simulation_passed" in state:
+
+        return _safe_bool(
+            state.get(
+                "simulation_passed"
+            ),
+            False,
+        )
+
+    # Compatibility.
+    if "test_passed" in state:
+
+        return _safe_bool(
+            state.get(
+                "test_passed"
+            ),
+            False,
+        )
+
+    # Simulation result dictionary.
+    result = state.get(
+        "simulation_result"
+    )
+
+    if isinstance(
+        result,
+        dict,
+    ):
+
+        if "passed" in result:
+
+            return _safe_bool(
+                result.get("passed"),
+                False,
+            )
+
+        if "success" in result:
+
+            return _safe_bool(
+                result.get("success"),
+                False,
+            )
+
+    return False
+
+
+# =============================================================================
+# COVERAGE
+# =============================================================================
+
+def get_coverage_score(
     state: Dict[str, Any],
 ) -> float:
 
+    # Direct fields.
     for key in (
         "coverage_percent",
         "coverage_score",
@@ -259,9 +355,15 @@ def _coverage_score(
                 ),
             )
 
-    coverage = state.get("coverage")
+    # Coverage dictionary.
+    coverage = state.get(
+        "coverage"
+    )
 
-    if isinstance(coverage, dict):
+    if isinstance(
+        coverage,
+        dict,
+    ):
 
         for key in (
             "coverage_percent",
@@ -286,7 +388,7 @@ def _coverage_score(
     return 0.0
 
 
-def _has_coverage_gaps(
+def has_coverage_gaps(
     state: Dict[str, Any],
 ) -> bool:
 
@@ -311,7 +413,11 @@ def _has_coverage_gaps(
     return bool(gaps)
 
 
-def _mutation_enabled(
+# =============================================================================
+# FEATURE FLAGS
+# =============================================================================
+
+def mutation_enabled(
     state: Dict[str, Any],
 ) -> bool:
 
@@ -332,7 +438,7 @@ def _mutation_enabled(
     )
 
 
-def _formal_enabled(
+def formal_enabled(
     state: Dict[str, Any],
 ) -> bool:
 
@@ -353,7 +459,11 @@ def _formal_enabled(
     )
 
 
-def _failure_text(
+# =============================================================================
+# FAILURE CLASSIFICATION
+# =============================================================================
+
+def get_failure_text(
     state: Dict[str, Any],
 ) -> str:
 
@@ -378,7 +488,10 @@ def _failure_text(
 
         value = state.get(key)
 
-        if isinstance(value, dict):
+        if isinstance(
+            value,
+            dict,
+        ):
 
             parts.extend(
                 str(v)
@@ -391,14 +504,22 @@ def _failure_text(
                 str(value)
             )
 
-    return " ".join(parts).lower()
+    return " ".join(
+        parts
+    ).lower()
 
 
-def _rtl_failure(
+def is_rtl_failure(
     state: Dict[str, Any],
 ) -> bool:
 
-    text = _failure_text(state)
+    text = get_failure_text(
+        state
+    )
+
+    # -------------------------------------------------------------------------
+    # Strong RTL indicators
+    # -------------------------------------------------------------------------
 
     rtl_keywords = (
         "rtl",
@@ -409,6 +530,7 @@ def _rtl_failure(
         "wrong output",
         "incorrect output",
         "wrong behavior",
+        "incorrect behavior",
         "register",
         "counter",
         "fsm",
@@ -425,6 +547,10 @@ def _rtl_failure(
         "protocol violation",
     )
 
+    # -------------------------------------------------------------------------
+    # Strong verification-environment indicators
+    # -------------------------------------------------------------------------
+
     testbench_keywords = (
         "testbench",
         "test bench",
@@ -432,6 +558,7 @@ def _rtl_failure(
         "checker",
         "expected value",
         "verification environment",
+        "test case",
     )
 
     if any(
@@ -446,10 +573,16 @@ def _rtl_failure(
     ):
         return False
 
+    # Conservative default:
+    # do NOT modify RTL when the failure has not been classified.
     return False
 
 
-def _repair_changed_rtl(
+# =============================================================================
+# REPAIR CLASSIFICATION
+# =============================================================================
+
+def repair_changed_rtl(
     state: Dict[str, Any],
 ) -> bool:
 
@@ -490,14 +623,14 @@ def _repair_changed_rtl(
 
 
 # =============================================================================
-# Simulation
+# ROUTE AFTER SIMULATION
 # =============================================================================
 
 def route_after_simulation(
     state: Dict[str, Any],
 ) -> str:
     """
-    Simulation result:
+    Simulation:
 
         PASS -> Coverage
 
@@ -510,37 +643,8 @@ def route_after_simulation(
     ):
         return FAILURE_ANALYSIS
 
-    passed = state.get(
-        "simulation_passed"
-    )
-
-    if passed is None:
-        passed = state.get(
-            "test_passed"
-        )
-
-    if passed is None:
-
-        result = state.get(
-            "simulation_result"
-        )
-
-        if isinstance(
-            result,
-            dict,
-        ):
-
-            passed = result.get(
-                "passed",
-                result.get(
-                    "success",
-                    False,
-                ),
-            )
-
-    if _safe_bool(
-        passed,
-        False,
+    if simulation_passed(
+        state
     ):
         return COVERAGE
 
@@ -548,20 +652,20 @@ def route_after_simulation(
 
 
 # =============================================================================
-# Failure analysis
+# ROUTE AFTER FAILURE ANALYSIS
 # =============================================================================
 
 def route_after_failure(
     state: Dict[str, Any],
 ) -> str:
     """
-    Failure:
+    Failure Analysis:
 
-        RTL problem -> RTL Repair
+        RTL failure -> RTL Repair
 
-        Otherwise -> Test Generation
+        Other failure -> Test Generation
 
-        Budget exhausted -> END
+        Iteration exhausted -> END
     """
 
     if not isinstance(
@@ -575,7 +679,7 @@ def route_after_failure(
     ):
         return END
 
-    if _rtl_failure(
+    if is_rtl_failure(
         state
     ):
         return RTL_REPAIR
@@ -584,18 +688,18 @@ def route_after_failure(
 
 
 # =============================================================================
-# Repair
+# ROUTE AFTER REPAIR
 # =============================================================================
 
 def route_after_repair(
     state: Dict[str, Any],
 ) -> str:
     """
-    Repair:
+    RTL Repair:
 
-        Changed RTL -> Bug Localization
+        Actual RTL change -> Bug Localization
 
-        No changed RTL -> Test Generation
+        No RTL change -> Test Generation
 
         Budget exhausted -> END
     """
@@ -611,7 +715,7 @@ def route_after_repair(
     ):
         return END
 
-    if _repair_changed_rtl(
+    if repair_changed_rtl(
         state
     ):
         return BUG_LOCALIZATION
@@ -620,7 +724,7 @@ def route_after_repair(
 
 
 # =============================================================================
-# Bug localization
+# ROUTE AFTER BUG LOCALIZATION
 # =============================================================================
 
 def route_after_bug_localization(
@@ -642,7 +746,7 @@ def route_after_bug_localization(
 
 
 # =============================================================================
-# Coverage
+# ROUTE AFTER COVERAGE
 # =============================================================================
 
 def route_after_coverage(
@@ -651,9 +755,9 @@ def route_after_coverage(
     """
     Coverage:
 
-        insufficient -> Test Generation
+        below target / gaps -> Test Generation
 
-        sufficient -> Red Team
+        target achieved -> Red Team
 
         budget exhausted -> END
     """
@@ -669,7 +773,7 @@ def route_after_coverage(
     ):
         return END
 
-    score = _coverage_score(
+    score = get_coverage_score(
         state
     )
 
@@ -682,7 +786,7 @@ def route_after_coverage(
     )
 
     if (
-        _has_coverage_gaps(state)
+        has_coverage_gaps(state)
         or score < target
     ):
         return TEST_GENERATION
@@ -691,7 +795,7 @@ def route_after_coverage(
 
 
 # =============================================================================
-# Red team
+# ROUTE AFTER RED TEAM
 # =============================================================================
 
 def route_after_red_team(
@@ -700,11 +804,11 @@ def route_after_red_team(
     """
     Red Team:
 
-        mutation enabled -> Mutation
+        Mutation enabled -> Mutation
 
-        formal enabled -> Formal
+        Formal enabled -> Formal
 
-        otherwise -> Judge
+        Otherwise -> Judge
     """
 
     if not isinstance(
@@ -713,12 +817,12 @@ def route_after_red_team(
     ):
         return JUDGE
 
-    if _mutation_enabled(
+    if mutation_enabled(
         state
     ):
         return MUTATION
 
-    if _formal_enabled(
+    if formal_enabled(
         state
     ):
         return FORMAL
@@ -727,12 +831,19 @@ def route_after_red_team(
 
 
 # =============================================================================
-# Mutation
+# ROUTE AFTER MUTATION
 # =============================================================================
 
 def route_after_mutation(
     state: Dict[str, Any],
 ) -> str:
+    """
+    Mutation:
+
+        Formal enabled -> Formal
+
+        Otherwise -> Judge
+    """
 
     if not isinstance(
         state,
@@ -740,7 +851,7 @@ def route_after_mutation(
     ):
         return JUDGE
 
-    if _formal_enabled(
+    if formal_enabled(
         state
     ):
         return FORMAL
@@ -749,18 +860,21 @@ def route_after_mutation(
 
 
 # =============================================================================
-# Formal
+# ROUTE AFTER FORMAL
 # =============================================================================
 
 def route_after_formal(
     state: Dict[str, Any],
 ) -> str:
+    """
+    Formal -> Judge
+    """
 
     return JUDGE
 
 
 # =============================================================================
-# Judge
+# ROUTE AFTER JUDGE
 # =============================================================================
 
 def route_after_judge(
@@ -769,15 +883,20 @@ def route_after_judge(
     """
     Judge:
 
-        PASS -> END
+        PASS
+          -> END
 
-        FAIL + RTL problem -> RTL Repair
+        FAIL + RTL issue
+          -> RTL Repair
 
-        FAIL + verification problem -> Test Generation
+        FAIL + verification issue
+          -> Test Generation
 
-        NEED_MORE -> Test Generation
+        NEED_MORE
+          -> Test Generation
 
-        budget exhausted -> END
+        Unknown
+          -> Test Generation if budget remains
     """
 
     if not isinstance(
@@ -786,35 +905,55 @@ def route_after_judge(
     ):
         return END
 
-    verdict = _get_judge_verdict(
+    verdict = get_judge_verdict(
         state
     )
 
+    # -------------------------------------------------------------------------
+    # PASS
+    # -------------------------------------------------------------------------
+
     if verdict == "PASS":
         return END
+
+    # -------------------------------------------------------------------------
+    # Iteration guard
+    # -------------------------------------------------------------------------
 
     if iteration_limit_reached(
         state
     ):
         return END
 
+    # -------------------------------------------------------------------------
+    # FAIL
+    # -------------------------------------------------------------------------
+
     if verdict == "FAIL":
 
-        if _rtl_failure(
+        if is_rtl_failure(
             state
         ):
             return RTL_REPAIR
 
         return TEST_GENERATION
 
+    # -------------------------------------------------------------------------
+    # NEED MORE
+    # -------------------------------------------------------------------------
+
     if verdict == "NEED_MORE":
         return TEST_GENERATION
+
+    # -------------------------------------------------------------------------
+    # UNKNOWN
+    # -------------------------------------------------------------------------
 
     return TEST_GENERATION
 
 
 # =============================================================================
-# Generic helpers
+# GENERIC HELPERS
 # =============================================================================
 
 def should_continue(
@@ -852,13 +991,13 @@ def get_final_verdict(
     if not state:
         return "UNKNOWN"
 
-    return _get_judge_verdict(
+    return get_judge_verdict(
         state
     )
 
 
 # =============================================================================
-# Compatibility aliases
+# BACKWARD COMPATIBILITY ALIASES
 # =============================================================================
 
 route_simulation = route_after_simulation
@@ -873,10 +1012,12 @@ route_judge = route_after_judge
 
 
 # =============================================================================
-# Public exports
+# EXPORTS
 # =============================================================================
 
 __all__ = [
+
+    # Constants
     "END",
 
     "RTL_ANALYSIS",
@@ -892,12 +1033,33 @@ __all__ = [
 
     "COVERAGE",
     "RED_TEAM",
+
     "MUTATION",
     "FORMAL",
     "JUDGE",
 
+    # Helpers
+    "get_iteration",
+    "get_max_iterations",
     "iteration_limit_reached",
 
+    "normalize_verdict",
+    "get_judge_verdict",
+
+    "simulation_passed",
+
+    "get_coverage_score",
+    "has_coverage_gaps",
+
+    "mutation_enabled",
+    "formal_enabled",
+
+    "get_failure_text",
+    "is_rtl_failure",
+
+    "repair_changed_rtl",
+
+    # Routes
     "route_after_simulation",
     "route_after_failure",
     "route_after_repair",
@@ -908,6 +1070,7 @@ __all__ = [
     "route_after_formal",
     "route_after_judge",
 
+    # Compatibility
     "route_simulation",
     "route_failure",
     "route_repair",
@@ -918,7 +1081,7 @@ __all__ = [
     "route_formal",
     "route_judge",
 
+    # Generic
     "should_continue",
     "get_final_verdict",
 ]
-
