@@ -20,7 +20,7 @@ st.set_page_config(
 
 st.title("⚡ Agentic RTL Design, Testbench & Verification Studio")
 st.markdown(
-    "Powered by **LangGraph**, **Groq (Llama-3.3-70b)**, and **Cocotb / Icarus Verilog**. "
+    "Powered by **LangGraph**, **Groq (`openai/gpt-oss-120b`)**, and **Cocotb / Icarus Verilog**. "
     "Enter a hardware specification to automatically generate, test, debug, and verify your Verilog code."
 )
 
@@ -69,8 +69,8 @@ class RTLState(TypedDict):
     max_iterations: int
     status: str
 
-# Initialize Groq LLM
-llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.1, api_key=groq_api_key)
+# Initialize Groq LLM with openai/gpt-oss-120b model
+llm = ChatGroq(model="openai/gpt-oss-120b", temperature=0.1, api_key=groq_api_key)
 
 # -----------------------------------------------------------------------------
 # Agent Nodes Definition
@@ -105,7 +105,7 @@ def rtl_generator_node(state: RTLState) -> dict:
     return {"rtl_code": rtl}
 
 def testbench_generator_node(state: RTLState) -> dict:
-    # CRITICAL FIX: Explicitly return empty dict `{}` instead of implicit `None`
+    # Explicitly return an empty dictionary `{}` instead of implicit `None`
     if state["test_code"] and state["iteration"] > 0:
         return {}
         
@@ -261,7 +261,7 @@ if run_btn:
         with st.status("Running Multi-Agent Hardware Verification Workflow...", expanded=True) as status_box:
             st.write("🤖 Initializing LangGraph state graph...")
             
-            # Stream execution states safely with guarded update check
+            # Stream execution states safely with guarded update checks
             current_state = initial_state
             for step in app.stream(initial_state):
                 node_name = list(step.keys())[0]
@@ -297,3 +297,4 @@ if run_btn:
             st.success("🎉 **Verified Result:** The RTL code successfully compiled, ran through Cocotb test scenarios, and passed all self-checking assertions!")
         else:
             st.error("⚠️ **Status:** Reached max correction loops or encountered persistent errors. Check the simulation log tab for traces.")
+            
