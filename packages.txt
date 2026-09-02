@@ -1,7 +1,12 @@
 iverilog
 verilator
 yosys
-symbiyosys
 boolector
 z3
 gtkwave
+git
+make
+gcc
+g++
+yosys
+z3
