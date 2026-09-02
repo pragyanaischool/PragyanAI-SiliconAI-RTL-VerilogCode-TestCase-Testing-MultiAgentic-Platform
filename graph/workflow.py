@@ -1,105 +1,373 @@
 """
 PragyanAI SiliconAI
-RTL Verification Agentic Workflow
+Agentic RTL Verification Workflow
 
-LangGraph orchestration for:
+File:
+    graph/workflow.py
 
-RTL Analysis
-    ↓
-Verification Planning
-    ↓
-Test Generation
-    ↓
-Testbench Generation
-    ↓
-Simulation
-    ↓
-Failure Analysis / Coverage
-    ↓
-RTL Repair / Bug Localization
-    ↓
-Red Team
-    ↓
-Mutation
-    ↓
-Formal Verification
-    ↓
-Verification Judge
+Architecture:
+    - graph/state.py   -> shared workflow state
+    - graph/router.py  -> ALL routing / decision logic
+    - graph/workflow.py -> graph construction + node execution ONLY
 
-This module intentionally keeps graph construction simple and explicit
-to maximize compatibility across LangGraph versions.
+IMPORTANT:
+    Do not put verification routing decisions in this file.
+
+The workflow connects:
+
+    START
+      |
+      v
+    RTL Analysis
+      |
+      v
+    Verification Planning
+      |
+      v
+    Test Generation
+      |
+      v
+    Testbench Generation
+      |
+      v
+    Simulation
+      |
+      +--------------------+
+      |                    |
+      | PASS               | FAIL
+      v                    v
+    Coverage         Failure Analysis
+      |                    |
+      |                    +----------+
+      |                               |
+      |                         RTL problem?
+      |                               |
+      |                         RTL Repair
+      |                               |
+      |                         Bug Localization
+      |                               |
+      +-------------------------------+
+      |
+      v
+    Red Team
+      |
+      v
+    Mutation (optional)
+      |
+      v
+    Formal (optional)
+      |
+      v
+    Judge
+      |
+      +----------------+
+      |                |
+     PASS             FAIL
+      |                |
+     END         Test Generation /
+                RTL Repair
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from langgraph.graph import END as LANGGRAPH_END
 from langgraph.graph import START, StateGraph
 
 from graph.state import VerificationState
+
 from graph.router import (
-    route_after_coverage,
+    END as ROUTER_END,
+    route_after_simulation,
     route_after_failure,
+    route_after_repair,
+    route_after_bug_localization,
+    route_after_coverage,
+    route_after_red_team,
+    route_after_mutation,
     route_after_formal,
     route_after_judge,
-    route_after_mutation,
-    route_after_repair,
-    route_after_simulation,
 )
 
-from agents.rtl_analyzer import RTLAnalyzer
-from agents.verification_planner import VerificationPlanner
-from agents.test_generator import TestGenerator
-from agents.testbench_generator import TestbenchGenerator
-from agents.simulator_agent import SimulatorAgent
-from agents.failure_analyzer import FailureAnalyzer
-from agents.coverage_agent import CoverageAgent
-from agents.red_team_agent import RedTeamAgent
-from agents.mutation_agent import MutationAgent
-from agents.formal_agent import FormalAgent
-from agents.bug_localization_agent import BugLocalizationAgent
-from agents.rtl_repair_agent import RTLRepairAgent
-from agents.verification_judge import VerificationJudge
+
+# =============================================================================
+# Agent imports
+# =============================================================================
+
+# The project has gone through a few naming revisions. These imports support
+# both Agent-suffixed and legacy class names.
+
+try:
+    from agents.rtl_analyzer import RTLAnalyzerAgent
+except ImportError:
+    from agents.rtl_analyzer import RTLAnalyzer
+
+    RTLAnalyzerAgent = RTLAnalyzer
 
 
-# ---------------------------------------------------------------------
-# Helper
-# ---------------------------------------------------------------------
+try:
+    from agents.verification_planner import VerificationPlannerAgent
+except ImportError:
+    from agents.verification_planner import VerificationPlanner
 
-def _safe_state(state: Any) -> Dict[str, Any]:
+    VerificationPlannerAgent = VerificationPlanner
+
+
+try:
+    from agents.test_generator import TestGeneratorAgent
+except ImportError:
+    from agents.test_generator import TestGenerator
+
+    TestGeneratorAgent = TestGenerator
+
+
+try:
+    from agents.testbench_generator import TestbenchGeneratorAgent
+except ImportError:
+    from agents.testbench_generator import TestbenchGenerator
+
+    TestbenchGeneratorAgent = TestbenchGenerator
+
+
+try:
+    from agents.simulator_agent import SimulatorAgent
+except ImportError:
+    try:
+        from agents.simulator_agent import Simulator
+        SimulatorAgent = Simulator
+    except ImportError:
+        from agents.simulator_agent import SimulatorAgent as SimulatorAgent
+
+
+try:
+    from agents.failure_analyzer import FailureAnalyzerAgent
+except ImportError:
+    from agents.failure_analyzer import FailureAnalyzer
+
+    FailureAnalyzerAgent = FailureAnalyzer
+
+
+try:
+    from agents.coverage_agent import CoverageAgent
+except ImportError:
+    from agents.coverage_agent import Coverage
+
+    CoverageAgent = Coverage
+
+
+try:
+    from agents.red_team_agent import RedTeamAgent
+except ImportError:
+    from agents.red_team_agent import RedTeam
+
+    RedTeamAgent = RedTeam
+
+
+try:
+    from agents.mutation_agent import MutationAgent
+except ImportError:
+    from agents.mutation_agent import Mutation
+
+    MutationAgent = Mutation
+
+
+try:
+    from agents.formal_agent import FormalAgent
+except ImportError:
+    from agents.formal_agent import Formal
+
+    FormalAgent = Formal
+
+
+try:
+    from agents.bug_localization_agent import BugLocalizationAgent
+except ImportError:
+    from agents.bug_localization_agent import BugLocalization
+
+    BugLocalizationAgent = BugLocalization
+
+
+try:
+    from agents.rtl_repair_agent import RTLRepairAgent
+except ImportError:
+    from agents.rtl_repair_agent import RTLRepair
+
+    RTLRepairAgent = RTLRepair
+
+
+try:
+    from agents.verification_judge import VerificationJudgeAgent
+except ImportError:
+    from agents.verification_judge import VerificationJudge
+
+    VerificationJudgeAgent = VerificationJudge
+
+
+# =============================================================================
+# Globals
+# =============================================================================
+
+AGENTS: Dict[str, Any] = {}
+
+WORKFLOW_ERROR: Optional[Exception] = None
+
+
+# =============================================================================
+# Agent creation
+# =============================================================================
+
+def _instantiate_agent(agent_class: Any) -> Any:
     """
-    Convert LangGraph state into a normal dictionary.
+    Instantiate an agent.
 
-    This makes the workflow tolerant of TypedDict-like state objects
-    and regular dictionaries.
+    Normal project agents use:
+
+        Agent()
+
+    A small compatibility fallback is included for legacy implementations.
     """
+
+    if agent_class is None:
+        raise ValueError("Agent class is None.")
+
+    # Normal constructor.
+    try:
+        return agent_class()
+    except TypeError as first_error:
+
+        # Some older implementations may expose a class-like singleton.
+        if hasattr(agent_class, "run"):
+            return agent_class
+
+        raise first_error
+
+
+def create_agents() -> Dict[str, Any]:
+    """
+    Create all verification agents.
+
+    Returns
+    -------
+    dict
+        Mapping between workflow node names and agent instances.
+    """
+
+    return {
+        "rtl_analysis": _instantiate_agent(
+            RTLAnalyzerAgent
+        ),
+
+        "planning": _instantiate_agent(
+            VerificationPlannerAgent
+        ),
+
+        "test_generation": _instantiate_agent(
+            TestGeneratorAgent
+        ),
+
+        "testbench_generation": _instantiate_agent(
+            TestbenchGeneratorAgent
+        ),
+
+        "simulation": _instantiate_agent(
+            SimulatorAgent
+        ),
+
+        "failure_analysis": _instantiate_agent(
+            FailureAnalyzerAgent
+        ),
+
+        "coverage": _instantiate_agent(
+            CoverageAgent
+        ),
+
+        "red_team": _instantiate_agent(
+            RedTeamAgent
+        ),
+
+        "mutation": _instantiate_agent(
+            MutationAgent
+        ),
+
+        "formal": _instantiate_agent(
+            FormalAgent
+        ),
+
+        "bug_localization": _instantiate_agent(
+            BugLocalizationAgent
+        ),
+
+        "rtl_repair": _instantiate_agent(
+            RTLRepairAgent
+        ),
+
+        "judge": _instantiate_agent(
+            VerificationJudgeAgent
+        ),
+    }
+
+
+# =============================================================================
+# Agent execution adapter
+# =============================================================================
+
+def _execute_agent(
+    agent: Any,
+    state: VerificationState,
+    agent_name: str,
+) -> Dict[str, Any]:
+    """
+    Execute one agent and normalize its output.
+
+    Supported agent interfaces:
+
+        agent.run(state)
+        agent.invoke(state)
+        agent(state)
+
+    The workflow itself does not interpret the agent result.
+    Routing remains exclusively in graph/router.py.
+    """
+
     if state is None:
-        return {}
-
-    if isinstance(state, dict):
-        return dict(state)
+        state = {}
 
     try:
-        return dict(state)
-    except Exception:
-        return {}
 
+        # -------------------------------------------------------------
+        # Preferred interface
+        # -------------------------------------------------------------
 
-def _run_agent(agent: Any, state: Any) -> Dict[str, Any]:
-    """
-    Execute an agent using the common .run(state) interface.
+        if hasattr(agent, "run"):
+            result = agent.run(state)
 
-    A small compatibility layer is used so the workflow can fail
-    gracefully instead of crashing during graph execution.
-    """
-    current_state = _safe_state(state)
+        # -------------------------------------------------------------
+        # LangChain-style interface
+        # -------------------------------------------------------------
 
-    try:
-        result = agent.run(current_state)
+        elif hasattr(agent, "invoke"):
+            result = agent.invoke(state)
+
+        # -------------------------------------------------------------
+        # Callable fallback
+        # -------------------------------------------------------------
+
+        elif callable(agent):
+            result = agent(state)
+
+        else:
+            raise TypeError(
+                f"Agent '{agent_name}' does not provide "
+                "run(), invoke(), or callable interface."
+            )
+
+        # -------------------------------------------------------------
+        # Normalize result
+        # -------------------------------------------------------------
 
         if result is None:
-            return current_state
+            return {}
 
         if isinstance(result, dict):
             return result
@@ -107,293 +375,358 @@ def _run_agent(agent: Any, state: Any) -> Dict[str, Any]:
         try:
             return dict(result)
         except Exception:
-            current_state["errors"] = list(
-                current_state.get("errors", [])
-            ) + [
-                f"{agent.__class__.__name__} returned unsupported result type"
-            ]
-            return current_state
+            return {
+                "agent_output": result,
+            }
 
     except Exception as exc:
-        errors = list(current_state.get("errors", []))
 
-        errors.append(
-            f"{agent.__class__.__name__}: {type(exc).__name__}: {exc}"
+        error_message = (
+            f"{agent_name} failed: "
+            f"{type(exc).__name__}: {exc}"
         )
 
-        current_state["errors"] = errors
-        current_state["status"] = "ERROR"
-
-        return current_state
-
-
-# ---------------------------------------------------------------------
-# Agent instances
-# ---------------------------------------------------------------------
-
-rtl_analyzer = RTLAnalyzer()
-verification_planner = VerificationPlanner()
-test_generator = TestGenerator()
-testbench_generator = TestbenchGenerator()
-simulator_agent = SimulatorAgent()
-failure_analyzer = FailureAnalyzer()
-coverage_agent = CoverageAgent()
-red_team_agent = RedTeamAgent()
-mutation_agent = MutationAgent()
-formal_agent = FormalAgent()
-bug_localization_agent = BugLocalizationAgent()
-rtl_repair_agent = RTLRepairAgent()
-verification_judge = VerificationJudge()
+        # Do not raise here.
+        #
+        # Returning an error state allows the Streamlit application
+        # to display the failure cleanly rather than crashing.
+        return {
+            "status": "error",
+            "error": error_message,
+            "errors": [
+                *state.get("errors", []),
+                error_message,
+            ],
+        }
 
 
-# ---------------------------------------------------------------------
-# Node functions
-# ---------------------------------------------------------------------
+# =============================================================================
+# Individual LangGraph nodes
+# =============================================================================
 
-def rtl_analysis_node(state: VerificationState) -> Dict[str, Any]:
-    """Analyze RTL structure and potential risk areas."""
-    return _run_agent(rtl_analyzer, state)
+def rtl_analysis_node(
+    state: VerificationState,
+) -> Dict[str, Any]:
+    """Run RTL analysis agent."""
+
+    return _execute_agent(
+        AGENTS["rtl_analysis"],
+        state,
+        "rtl_analysis",
+    )
 
 
-def planning_node(state: VerificationState) -> Dict[str, Any]:
-    """Create verification strategy and coverage plan."""
-    return _run_agent(verification_planner, state)
+def planning_node(
+    state: VerificationState,
+) -> Dict[str, Any]:
+    """Run verification planning agent."""
+
+    return _execute_agent(
+        AGENTS["planning"],
+        state,
+        "planning",
+    )
 
 
-def test_generation_node(state: VerificationState) -> Dict[str, Any]:
-    """Generate functional and corner-case tests."""
-    return _run_agent(test_generator, state)
+def test_generation_node(
+    state: VerificationState,
+) -> Dict[str, Any]:
+    """Run test generation agent."""
+
+    return _execute_agent(
+        AGENTS["test_generation"],
+        state,
+        "test_generation",
+    )
 
 
 def testbench_generation_node(
     state: VerificationState,
 ) -> Dict[str, Any]:
-    """Generate executable Verilog/SystemVerilog testbench."""
-    return _run_agent(testbench_generator, state)
+    """Run testbench generation agent."""
+
+    return _execute_agent(
+        AGENTS["testbench_generation"],
+        state,
+        "testbench_generation",
+    )
 
 
-def simulation_node(state: VerificationState) -> Dict[str, Any]:
-    """Compile and execute RTL/testbench using Icarus."""
-    return _run_agent(simulator_agent, state)
+def simulation_node(
+    state: VerificationState,
+) -> Dict[str, Any]:
+    """Run RTL simulation."""
+
+    return _execute_agent(
+        AGENTS["simulation"],
+        state,
+        "simulation",
+    )
 
 
 def failure_analysis_node(
     state: VerificationState,
 ) -> Dict[str, Any]:
-    """Analyze simulation failures."""
-    return _run_agent(failure_analyzer, state)
+    """Analyze simulation failure."""
 
-
-def coverage_node(state: VerificationState) -> Dict[str, Any]:
-    """Analyze coverage and verification gaps."""
-    return _run_agent(coverage_agent, state)
-
-
-def red_team_node(state: VerificationState) -> Dict[str, Any]:
-    """Generate adversarial verification scenarios."""
-    return _run_agent(red_team_agent, state)
-
-
-def mutation_node(state: VerificationState) -> Dict[str, Any]:
-    """Run mutation testing against the RTL."""
-    return _run_agent(mutation_agent, state)
-
-
-def formal_node(state: VerificationState) -> Dict[str, Any]:
-    """Run formal verification where available."""
-    return _run_agent(formal_agent, state)
-
-
-def bug_localization_node(
-    state: VerificationState,
-) -> Dict[str, Any]:
-    """Localize likely RTL bug locations."""
-    return _run_agent(bug_localization_agent, state)
-
-
-def rtl_repair_node(
-    state: VerificationState,
-) -> Dict[str, Any]:
-    """Propose and validate conservative RTL repair."""
-    return _run_agent(rtl_repair_agent, state)
-
-
-def judge_node(state: VerificationState) -> Dict[str, Any]:
-    """Independently judge final verification status."""
-    return _run_agent(verification_judge, state)
-
-
-# ---------------------------------------------------------------------
-# Safe router wrappers
-# ---------------------------------------------------------------------
-
-def _safe_route(
-    router,
-    state: VerificationState,
-    default: str,
-) -> str:
-    """
-    Execute a router safely.
-
-    If a router throws an exception, route to a conservative
-    verification path rather than breaking graph execution.
-    """
-    try:
-        value = router(_safe_state(state))
-
-        if value is None:
-            return default
-
-        return str(value)
-
-    except Exception as exc:
-        # Preserve routing failure in state where possible.
-        # LangGraph conditional routing itself cannot mutate state,
-        # therefore the safe fallback is simply returned.
-        _ = exc
-        return default
-
-
-def simulation_router(state: VerificationState) -> str:
-    """
-    Simulation result router.
-
-    PASS  -> coverage
-    FAIL  -> failure analysis
-    """
-    return _safe_route(
-        route_after_simulation,
+    return _execute_agent(
+        AGENTS["failure_analysis"],
         state,
         "failure_analysis",
     )
 
 
-def failure_router(state: VerificationState) -> str:
-    """
-    Failure analysis router.
+def coverage_node(
+    state: VerificationState,
+) -> Dict[str, Any]:
+    """Analyze functional / verification coverage."""
 
-    Typical destinations:
-        test_generation
-        rtl_repair
-        end
-    """
-    return _safe_route(
-        route_after_failure,
+    return _execute_agent(
+        AGENTS["coverage"],
         state,
-        "test_generation",
+        "coverage",
     )
 
 
-def repair_router(state: VerificationState) -> str:
-    """
-    Repair router.
+def red_team_node(
+    state: VerificationState,
+) -> Dict[str, Any]:
+    """Run adversarial / corner-case verification."""
 
-    If actual RTL changed:
-        bug_localization
-
-    Otherwise:
-        test_generation
-    """
-    return _safe_route(
-        route_after_repair,
+    return _execute_agent(
+        AGENTS["red_team"],
         state,
-        "test_generation",
+        "red_team",
     )
 
 
-def coverage_router(state: VerificationState) -> str:
-    """
-    Coverage router.
+def mutation_node(
+    state: VerificationState,
+) -> Dict[str, Any]:
+    """Run mutation testing."""
 
-    Insufficient coverage:
-        test_generation
-
-    Sufficient:
-        red_team
-
-    Optional terminal path:
-        end
-    """
-    return _safe_route(
-        route_after_coverage,
+    return _execute_agent(
+        AGENTS["mutation"],
         state,
-        "test_generation",
+        "mutation",
     )
 
 
-def mutation_router(state: VerificationState) -> str:
+def formal_node(
+    state: VerificationState,
+) -> Dict[str, Any]:
     """
-    Mutation router.
+    Run optional formal verification.
 
-    Normally:
-        formal
-
-    If mutation/formal is disabled:
-        formal/end depending on router implementation.
+    Formal availability is handled by the formal agent itself.
+    No SymbiYosys requirement is introduced here.
     """
-    return _safe_route(
-        route_after_mutation,
+
+    return _execute_agent(
+        AGENTS["formal"],
         state,
         "formal",
     )
 
 
-def formal_router(state: VerificationState) -> str:
-    """
-    Formal verification router.
+def bug_localization_node(
+    state: VerificationState,
+) -> Dict[str, Any]:
+    """Locate likely RTL bug."""
 
-    Normally:
-        judge
+    return _execute_agent(
+        AGENTS["bug_localization"],
+        state,
+        "bug_localization",
+    )
 
-    If formal is unavailable:
-        judge
-    """
-    return _safe_route(
-        route_after_formal,
+
+def rtl_repair_node(
+    state: VerificationState,
+) -> Dict[str, Any]:
+    """Generate/apply RTL repair."""
+
+    return _execute_agent(
+        AGENTS["rtl_repair"],
+        state,
+        "rtl_repair",
+    )
+
+
+def judge_node(
+    state: VerificationState,
+) -> Dict[str, Any]:
+    """Run final verification judge."""
+
+    return _execute_agent(
+        AGENTS["judge"],
         state,
         "judge",
     )
 
 
-def judge_router(state: VerificationState) -> str:
-    """
-    Final verification judge router.
+# =============================================================================
+# Router adapters
+# =============================================================================
 
-    PASS:
+def _convert_router_result(
+    result: str,
+) -> str:
+    """
+    Convert router.py's internal END marker to LangGraph END.
+
+    router.py returns:
+
+        "end"
+
+    LangGraph expects:
+
         END
 
-    FAIL:
-        RTL repair or test generation
-
-    NEED_MORE_VERIFICATION:
-        test generation
+    All other node names are returned unchanged.
     """
-    return _safe_route(
-        route_after_judge,
-        state,
-        "test_generation",
+
+    if result == ROUTER_END:
+        return LANGGRAPH_END
+
+    return result
+
+
+def simulation_router(
+    state: VerificationState,
+) -> str:
+    """Delegate simulation routing to graph.router."""
+
+    return _convert_router_result(
+        route_after_simulation(state)
     )
 
 
-# ---------------------------------------------------------------------
-# Workflow builder
-# ---------------------------------------------------------------------
+def failure_router(
+    state: VerificationState,
+) -> str:
+    """Delegate failure routing to graph.router."""
 
-def build_workflow():
+    return _convert_router_result(
+        route_after_failure(state)
+    )
+
+
+def repair_router(
+    state: VerificationState,
+) -> str:
+    """Delegate RTL repair routing to graph.router."""
+
+    return _convert_router_result(
+        route_after_repair(state)
+    )
+
+
+def bug_localization_router(
+    state: VerificationState,
+) -> str:
+    """Delegate bug localization routing to graph.router."""
+
+    return _convert_router_result(
+        route_after_bug_localization(state)
+    )
+
+
+def coverage_router(
+    state: VerificationState,
+) -> str:
+    """Delegate coverage routing to graph.router."""
+
+    return _convert_router_result(
+        route_after_coverage(state)
+    )
+
+
+def red_team_router(
+    state: VerificationState,
+) -> str:
+    """Delegate red-team routing to graph.router."""
+
+    return _convert_router_result(
+        route_after_red_team(state)
+    )
+
+
+def mutation_router(
+    state: VerificationState,
+) -> str:
+    """Delegate mutation routing to graph.router."""
+
+    return _convert_router_result(
+        route_after_mutation(state)
+    )
+
+
+def formal_router(
+    state: VerificationState,
+) -> str:
+    """Delegate formal routing to graph.router."""
+
+    return _convert_router_result(
+        route_after_formal(state)
+    )
+
+
+def judge_router(
+    state: VerificationState,
+) -> str:
+    """Delegate final judge routing to graph.router."""
+
+    return _convert_router_result(
+        route_after_judge(state)
+    )
+
+
+# =============================================================================
+# Graph builder
+# =============================================================================
+
+def build_workflow(
+    agents: Optional[Dict[str, Any]] = None,
+):
     """
     Build and compile the PragyanAI SiliconAI verification graph.
 
-    Important:
-    Graph construction itself does not require a Groq API key.
-    Agents are instantiated once, while model calls happen only
-    when individual nodes execute.
+    Parameters
+    ----------
+    agents:
+        Optional agent dictionary.
+
+        Primarily useful for testing and dependency injection.
+
+    Returns
+    -------
+    CompiledStateGraph
+        Compiled LangGraph workflow.
     """
 
-    builder = StateGraph(VerificationState)
+    global AGENTS
 
-    # -------------------------------------------------------------
+    # -------------------------------------------------------------------------
+    # Agents
+    # -------------------------------------------------------------------------
+
+    if agents is None:
+        AGENTS = create_agents()
+    else:
+        AGENTS = agents
+
+    # -------------------------------------------------------------------------
+    # State graph
+    # -------------------------------------------------------------------------
+
+    builder = StateGraph(
+        VerificationState
+    )
+
+    # -------------------------------------------------------------------------
     # Nodes
-    # -------------------------------------------------------------
+    # -------------------------------------------------------------------------
 
     builder.add_node(
         "rtl_analysis",
@@ -460,9 +793,9 @@ def build_workflow():
         judge_node,
     )
 
-    # -------------------------------------------------------------
-    # Initial linear flow
-    # -------------------------------------------------------------
+    # =========================================================================
+    # Main pipeline
+    # =========================================================================
 
     builder.add_edge(
         START,
@@ -489,9 +822,11 @@ def build_workflow():
         "simulation",
     )
 
-    # -------------------------------------------------------------
-    # Simulation routing
-    # -------------------------------------------------------------
+    # =========================================================================
+    # Simulation -> Coverage / Failure Analysis
+    #
+    # ALL DECISION LOGIC IS IN graph/router.py
+    # =========================================================================
 
     builder.add_conditional_edges(
         "simulation",
@@ -499,28 +834,27 @@ def build_workflow():
         {
             "coverage": "coverage",
             "failure_analysis": "failure_analysis",
-            "test_generation": "test_generation",
-            "end": LANGGRAPH_END,
+            LANGGRAPH_END: LANGGRAPH_END,
         },
     )
 
-    # -------------------------------------------------------------
-    # Failure analysis routing
-    # -------------------------------------------------------------
+    # =========================================================================
+    # Failure Analysis -> RTL Repair / Test Generation / END
+    # =========================================================================
 
     builder.add_conditional_edges(
         "failure_analysis",
         failure_router,
         {
-            "test_generation": "test_generation",
             "rtl_repair": "rtl_repair",
-            "end": LANGGRAPH_END,
+            "test_generation": "test_generation",
+            LANGGRAPH_END: LANGGRAPH_END,
         },
     )
 
-    # -------------------------------------------------------------
-    # RTL repair routing
-    # -------------------------------------------------------------
+    # =========================================================================
+    # RTL Repair -> Bug Localization / Test Generation / END
+    # =========================================================================
 
     builder.add_conditional_edges(
         "rtl_repair",
@@ -528,22 +862,26 @@ def build_workflow():
         {
             "bug_localization": "bug_localization",
             "test_generation": "test_generation",
-            "end": LANGGRAPH_END,
+            LANGGRAPH_END: LANGGRAPH_END,
         },
     )
 
-    # -------------------------------------------------------------
-    # Bug localization
-    # -------------------------------------------------------------
+    # =========================================================================
+    # Bug Localization -> Test Generation
+    # =========================================================================
 
-    builder.add_edge(
+    builder.add_conditional_edges(
         "bug_localization",
-        "test_generation",
+        bug_localization_router,
+        {
+            "test_generation": "test_generation",
+            LANGGRAPH_END: LANGGRAPH_END,
+        },
     )
 
-    # -------------------------------------------------------------
-    # Coverage routing
-    # -------------------------------------------------------------
+    # =========================================================================
+    # Coverage -> Test Generation / Red Team / END
+    # =========================================================================
 
     builder.add_conditional_edges(
         "coverage",
@@ -551,22 +889,28 @@ def build_workflow():
         {
             "test_generation": "test_generation",
             "red_team": "red_team",
-            "end": LANGGRAPH_END,
+            LANGGRAPH_END: LANGGRAPH_END,
         },
     )
 
-    # -------------------------------------------------------------
-    # Red team
-    # -------------------------------------------------------------
+    # =========================================================================
+    # Red Team -> Mutation / Formal / Judge / END
+    # =========================================================================
 
-    builder.add_edge(
+    builder.add_conditional_edges(
         "red_team",
-        "mutation",
+        red_team_router,
+        {
+            "mutation": "mutation",
+            "formal": "formal",
+            "judge": "judge",
+            LANGGRAPH_END: LANGGRAPH_END,
+        },
     )
 
-    # -------------------------------------------------------------
-    # Mutation routing
-    # -------------------------------------------------------------
+    # =========================================================================
+    # Mutation -> Formal / Judge / END
+    # =========================================================================
 
     builder.add_conditional_edges(
         "mutation",
@@ -574,135 +918,266 @@ def build_workflow():
         {
             "formal": "formal",
             "judge": "judge",
-            "end": LANGGRAPH_END,
+            LANGGRAPH_END: LANGGRAPH_END,
         },
     )
 
-    # -------------------------------------------------------------
-    # Formal routing
-    # -------------------------------------------------------------
+    # =========================================================================
+    # Formal -> Judge / END
+    # =========================================================================
 
     builder.add_conditional_edges(
         "formal",
         formal_router,
         {
             "judge": "judge",
-            "end": LANGGRAPH_END,
+            LANGGRAPH_END: LANGGRAPH_END,
         },
     )
 
-    # -------------------------------------------------------------
-    # Final judge
-    # -------------------------------------------------------------
+    # =========================================================================
+    # Judge -> END / Test Generation / RTL Repair / Bug Localization
+    # =========================================================================
 
     builder.add_conditional_edges(
         "judge",
         judge_router,
         {
-            "end": LANGGRAPH_END,
+            LANGGRAPH_END: LANGGRAPH_END,
             "test_generation": "test_generation",
             "rtl_repair": "rtl_repair",
             "bug_localization": "bug_localization",
         },
     )
 
-    # -------------------------------------------------------------
+    # =========================================================================
     # Compile
-    # -------------------------------------------------------------
+    # =========================================================================
 
     return builder.compile()
 
 
-# ---------------------------------------------------------------------
-# Public workflow object
-# ---------------------------------------------------------------------
-
-workflow = None
-WORKFLOW_ERROR = None
+# =============================================================================
+# Default compiled workflow
+# =============================================================================
 
 try:
     workflow = build_workflow()
-except Exception as exc:
-    import traceback
 
-    WORKFLOW_ERROR = traceback.format_exc()
+except Exception as exc:
+    WORKFLOW_ERROR = exc
     workflow = None
 
 
+# =============================================================================
 # Compatibility aliases
+# =============================================================================
+
+# Existing main_app.py may use any of these names.
+
 graph = workflow
+
 app = workflow
+
 verification_workflow = workflow
+
 verification_graph = workflow
 
 
-# ---------------------------------------------------------------------
-# Factory aliases
-# ---------------------------------------------------------------------
+# =============================================================================
+# Factory functions
+# =============================================================================
 
 def create_workflow():
-    """Create a new compiled verification workflow."""
-    return build_workflow()
+    """Create a fresh compiled workflow."""
 
-
-def build_graph():
-    """Compatibility alias for build_workflow()."""
     return build_workflow()
 
 
 def create_graph():
-    """Compatibility alias for build_workflow()."""
+    """Create a fresh compiled graph."""
+
     return build_workflow()
 
 
-# ---------------------------------------------------------------------
-# Execution helper
-# ---------------------------------------------------------------------
+def build_graph():
+    """Compatibility alias for build_workflow."""
+
+    return build_workflow()
+
+
+def build_verification_workflow():
+    """
+    Compatibility alias.
+
+    Older graph/__init__.py versions may import this name.
+    """
+
+    return build_workflow()
+
+
+def create_verification_workflow():
+    """
+    Compatibility alias.
+
+    Older application code may import this name.
+    """
+
+    return build_workflow()
+
+
+# =============================================================================
+# Workflow execution
+# =============================================================================
 
 def run_workflow(
     state: VerificationState,
-    *,
-    stream: bool = False,
-):
+    **kwargs: Any,
+) -> Any:
     """
-    Execute the verification workflow.
+    Execute the compiled workflow synchronously.
 
     Parameters
     ----------
     state:
         Initial VerificationState.
 
-    stream:
-        If True, return LangGraph stream output.
-        If False, invoke the graph and return final state.
+    kwargs:
+        Optional LangGraph invoke configuration.
+
+    Returns
+    -------
+    dict
+        Final workflow state.
     """
 
     if workflow is None:
+
+        if WORKFLOW_ERROR is not None:
+            raise RuntimeError(
+                "Verification workflow could not be loaded."
+            ) from WORKFLOW_ERROR
+
         raise RuntimeError(
-            "Verification workflow could not be built.\n\n"
-            + (WORKFLOW_ERROR or "Unknown workflow construction error")
+            "Verification workflow is not available."
         )
 
-    if stream:
-        return workflow.stream(
-            state,
-            stream_mode="updates",
+    return workflow.invoke(
+        state,
+        **kwargs,
+    )
+
+
+def stream_workflow(
+    state: VerificationState,
+    **kwargs: Any,
+):
+    """
+    Stream workflow updates.
+
+    This is useful for Streamlit UI and agent trace display.
+    """
+
+    if workflow is None:
+
+        if WORKFLOW_ERROR is not None:
+            raise RuntimeError(
+                "Verification workflow could not be loaded."
+            ) from WORKFLOW_ERROR
+
+        raise RuntimeError(
+            "Verification workflow is not available."
         )
 
-    return workflow.invoke(state)
+    return workflow.stream(
+        state,
+        **kwargs,
+    )
 
+
+# =============================================================================
+# Diagnostic helpers
+# =============================================================================
+
+def workflow_is_available() -> bool:
+    """Return True when workflow compiled successfully."""
+
+    return workflow is not None
+
+
+def get_workflow_error() -> Optional[Exception]:
+    """Return workflow construction error, if any."""
+
+    return WORKFLOW_ERROR
+
+
+def get_agent_names():
+    """Return configured agent names."""
+
+    return list(AGENTS.keys())
+
+
+# =============================================================================
+# Public exports
+# =============================================================================
 
 __all__ = [
+    # Compiled workflow
     "workflow",
     "graph",
     "app",
     "verification_workflow",
     "verification_graph",
+
+    # Agent management
+    "AGENTS",
+    "create_agents",
+
+    # Node functions
+    "rtl_analysis_node",
+    "planning_node",
+    "test_generation_node",
+    "testbench_generation_node",
+    "simulation_node",
+    "failure_analysis_node",
+    "coverage_node",
+    "red_team_node",
+    "mutation_node",
+    "formal_node",
+    "bug_localization_node",
+    "rtl_repair_node",
+    "judge_node",
+
+    # Router adapters
+    "simulation_router",
+    "failure_router",
+    "repair_router",
+    "bug_localization_router",
+    "coverage_router",
+    "red_team_router",
+    "mutation_router",
+    "formal_router",
+    "judge_router",
+
+    # Builders
     "build_workflow",
     "create_workflow",
-    "build_graph",
     "create_graph",
+    "build_graph",
+    "build_verification_workflow",
+    "create_verification_workflow",
+
+    # Execution
     "run_workflow",
+    "stream_workflow",
+
+    # Diagnostics
+    "workflow_is_available",
+    "get_workflow_error",
+    "get_agent_names",
+
+    # Errors
     "WORKFLOW_ERROR",
 ]
+
 
