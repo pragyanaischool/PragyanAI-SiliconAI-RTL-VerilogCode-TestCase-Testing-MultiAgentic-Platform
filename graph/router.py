@@ -1,969 +1,924 @@
 """
 PragyanAI SiliconAI
-Agentic RTL Verification LangGraph Workflow
+Agentic RTL Verification Router
 
-IMPORTANT ARCHITECTURE RULE
-----------------------------
+IMPORTANT
+---------
+ALL workflow routing decisions live in this file.
 
-Routing logic belongs ONLY in:
+graph/workflow.py only connects LangGraph nodes to these functions.
 
-    graph/router.py
-
-This file is responsible for:
-
-    1. Creating agent instances.
-    2. Defining LangGraph nodes.
-    3. Connecting nodes.
-    4. Calling router functions for conditional edges.
-    5. Compiling the graph.
-
-It should NOT contain verification routing decisions.
+DO NOT import graph.router from graph.router.
 """
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Optional
-
-from langgraph.graph import END as LANGGRAPH_END
-from langgraph.graph import START, StateGraph
-
-from graph.state import (
-    VerificationState,
-    add_agent_log,
-    add_agent_trace,
-    mark_running,
-)
-
-from graph.router import (
-    END as ROUTER_END,
-
-    route_after_simulation,
-    route_after_failure,
-    route_after_repair,
-    route_after_bug_localization,
-    route_after_coverage,
-    route_after_red_team,
-    route_after_mutation,
-    route_after_formal,
-    route_after_judge,
-)
+from typing import Any, Dict, Optional
 
 
-# ============================================================================
-# Agent imports
-# ============================================================================
+# =============================================================================
+# Router constants
+# =============================================================================
 
-# Compatibility imports are intentional.
-# Different versions of the project may use Agent or non-Agent class names.
+END = "end"
 
-try:
-    from agents.rtl_analyzer import RTLAnalyzerAgent
-except ImportError:
-    from agents.rtl_analyzer import RTLAnalyzer
+RTL_ANALYSIS = "rtl_analysis"
+PLANNING = "planning"
 
-    RTLAnalyzerAgent = RTLAnalyzer
+TEST_GENERATION = "test_generation"
+TESTBENCH_GENERATION = "testbench_generation"
+SIMULATION = "simulation"
 
+FAILURE_ANALYSIS = "failure_analysis"
+BUG_LOCALIZATION = "bug_localization"
+RTL_REPAIR = "rtl_repair"
 
-try:
-    from agents.verification_planner import VerificationPlannerAgent
-except ImportError:
-    from agents.verification_planner import VerificationPlanner
+COVERAGE = "coverage"
+RED_TEAM = "red_team"
 
-    VerificationPlannerAgent = VerificationPlanner
-
-
-try:
-    from agents.test_generator import TestGeneratorAgent
-except ImportError:
-    from agents.test_generator import TestGenerator
-
-    TestGeneratorAgent = TestGenerator
+MUTATION = "mutation"
+FORMAL = "formal"
+JUDGE = "judge"
 
 
-try:
-    from agents.testbench_generator import TestbenchGeneratorAgent
-except ImportError:
-    from agents.testbench_generator import TestbenchGenerator
+# =============================================================================
+# Helpers
+# =============================================================================
 
-    TestbenchGeneratorAgent = TestbenchGenerator
-
-
-try:
-    from agents.simulator_agent import SimulatorAgent
-except ImportError:
-    from agents.simulator_agent import Simulator
-
-    SimulatorAgent = Simulator
-
-
-try:
-    from agents.failure_analyzer import FailureAnalyzerAgent
-except ImportError:
-    from agents.failure_analyzer import FailureAnalyzer
-
-    FailureAnalyzerAgent = FailureAnalyzer
-
-
-try:
-    from agents.coverage_agent import CoverageAgent
-except ImportError:
-    from agents.coverage_agent import Coverage
-
-    CoverageAgent = Coverage
-
-
-try:
-    from agents.red_team_agent import RedTeamAgent
-except ImportError:
-    from agents.red_team_agent import RedTeam
-
-    RedTeamAgent = RedTeam
-
-
-try:
-    from agents.mutation_agent import MutationAgent
-except ImportError:
-    from agents.mutation_agent import Mutation
-
-    MutationAgent = Mutation
-
-
-try:
-    from agents.formal_agent import FormalAgent
-except ImportError:
-    from agents.formal_agent import Formal
-
-    FormalAgent = Formal
-
-
-try:
-    from agents.bug_localization_agent import BugLocalizationAgent
-except ImportError:
-    from agents.bug_localization_agent import BugLocalization
-
-    BugLocalizationAgent = BugLocalization
-
-
-try:
-    from agents.rtl_repair_agent import RTLRepairAgent
-except ImportError:
-    from agents.rtl_repair_agent import RTLRepair
-
-    RTLRepairAgent = RTLRepair
-
-
-try:
-    from agents.verification_judge import VerificationJudgeAgent
-except ImportError:
-    from agents.verification_judge import VerificationJudge
-
-    VerificationJudgeAgent = VerificationJudge
-
-
-# ============================================================================
-# Agent construction
-# ============================================================================
-
-def _create_agent(
-    cls: Any,
-) -> Any:
-    """
-    Safely instantiate an agent.
-
-    Agents in different project revisions may accept different constructor
-    signatures, so try the normal constructor first and then fall back to
-    an object-level construction where possible.
-    """
+def _safe_int(
+    value: Any,
+    default: int = 0,
+) -> int:
 
     try:
-        return cls()
-    except TypeError:
-        try:
-            return cls
-        except Exception:
-            raise
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
-def _build_agents() -> Dict[str, Any]:
-    """Create all verification agents."""
-
-    return {
-        "rtl_analysis": _create_agent(
-            RTLAnalyzerAgent
-        ),
-
-        "planning": _create_agent(
-            VerificationPlannerAgent
-        ),
-
-        "test_generation": _create_agent(
-            TestGeneratorAgent
-        ),
-
-        "testbench_generation": _create_agent(
-            TestbenchGeneratorAgent
-        ),
-
-        "simulation": _create_agent(
-            SimulatorAgent
-        ),
-
-        "failure_analysis": _create_agent(
-            FailureAnalyzerAgent
-        ),
-
-        "coverage": _create_agent(
-            CoverageAgent
-        ),
-
-        "red_team": _create_agent(
-            RedTeamAgent
-        ),
-
-        "mutation": _create_agent(
-            MutationAgent
-        ),
-
-        "formal": _create_agent(
-            FormalAgent
-        ),
-
-        "bug_localization": _create_agent(
-            BugLocalizationAgent
-        ),
-
-        "rtl_repair": _create_agent(
-            RTLRepairAgent
-        ),
-
-        "judge": _create_agent(
-            VerificationJudgeAgent
-        ),
-    }
-
-
-# ============================================================================
-# Agent execution
-# ============================================================================
-
-def _run_agent(
-    state: VerificationState,
-    agent: Any,
-    agent_name: str,
-) -> Dict[str, Any]:
-    """
-    Execute an agent and normalize its output.
-
-    Agents may return:
-        - dict
-        - VerificationState
-        - None
-
-    LangGraph nodes should return a state update dictionary.
-    """
-
-    if state is None:
-        state = {}
-
-    # Record trace before execution.
-    try:
-        add_agent_trace(
-            state,
-            agent_name,
-            "start",
-        )
-
-        add_agent_log(
-            state,
-            f"{agent_name}: started",
-        )
-    except Exception:
-        pass
+def _safe_float(
+    value: Any,
+    default: float = 0.0,
+) -> float:
 
     try:
-        # Preferred interface.
-        if hasattr(agent, "run"):
-            result = agent.run(state)
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
-        # Compatibility with invoke-style agents.
-        elif hasattr(agent, "invoke"):
-            result = agent.invoke(state)
 
-        # Compatibility with callable agents.
-        elif callable(agent):
-            result = agent(state)
+def _safe_bool(
+    value: Any,
+    default: bool = False,
+) -> bool:
 
-        else:
-            raise TypeError(
-                f"Agent '{agent_name}' does not expose "
-                "run(), invoke(), or __call__()."
+    if value is None:
+        return default
+
+    if isinstance(value, bool):
+        return value
+
+    if isinstance(value, str):
+
+        value = value.strip().lower()
+
+        if value in {
+            "true",
+            "1",
+            "yes",
+            "on",
+            "pass",
+            "passed",
+        }:
+            return True
+
+        if value in {
+            "false",
+            "0",
+            "no",
+            "off",
+            "fail",
+            "failed",
+        }:
+            return False
+
+    return bool(value)
+
+
+def _iteration(
+    state: Dict[str, Any],
+) -> int:
+
+    return max(
+        0,
+        _safe_int(
+            state.get("iteration", 0),
+            0,
+        ),
+    )
+
+
+def _max_iterations(
+    state: Dict[str, Any],
+) -> int:
+
+    value = _safe_int(
+        state.get(
+            "max_iterations",
+            3,
+        ),
+        3,
+    )
+
+    return max(
+        1,
+        min(10, value),
+    )
+
+
+def iteration_limit_reached(
+    state: Dict[str, Any],
+) -> bool:
+
+    return (
+        _iteration(state)
+        >= _max_iterations(state)
+    )
+
+
+def _normalize_verdict(
+    value: Any,
+) -> str:
+
+    if value is None:
+        return "UNKNOWN"
+
+    value = str(value).strip().upper()
+
+    if value in {
+        "PASS",
+        "PASSED",
+        "SUCCESS",
+        "VERIFIED",
+        "VERIFICATION PASSED",
+    }:
+        return "PASS"
+
+    if value in {
+        "FAIL",
+        "FAILED",
+        "ERROR",
+        "REJECTED",
+        "VERIFICATION FAILED",
+    }:
+        return "FAIL"
+
+    if value in {
+        "NEED_MORE",
+        "NEED MORE",
+        "RETRY",
+        "RETRY_REQUIRED",
+        "CONTINUE",
+        "INCOMPLETE",
+    }:
+        return "NEED_MORE"
+
+    return "UNKNOWN"
+
+
+def _get_judge_verdict(
+    state: Dict[str, Any],
+) -> str:
+
+    for key in (
+        "final_verdict",
+        "verdict",
+    ):
+
+        value = state.get(key)
+
+        if value:
+
+            verdict = _normalize_verdict(
+                value
             )
 
-    except Exception as exc:
-        message = (
-            f"{agent_name} failed: "
-            f"{type(exc).__name__}: {exc}"
+            if verdict != "UNKNOWN":
+                return verdict
+
+    for container_key in (
+        "judge_result",
+        "judge",
+    ):
+
+        result = state.get(
+            container_key
         )
 
-        try:
-            add_agent_trace(
-                state,
-                agent_name,
-                "error",
-                message,
+        if not isinstance(result, dict):
+            continue
+
+        for key in (
+            "verdict",
+            "final_verdict",
+            "status",
+            "result",
+        ):
+
+            verdict = _normalize_verdict(
+                result.get(key)
             )
 
-            add_agent_log(
-                state,
-                message,
+            if verdict != "UNKNOWN":
+                return verdict
+
+    return "UNKNOWN"
+
+
+def _coverage_score(
+    state: Dict[str, Any],
+) -> float:
+
+    for key in (
+        "coverage_percent",
+        "coverage_score",
+    ):
+
+        value = state.get(key)
+
+        if value is not None:
+
+            return max(
+                0.0,
+                min(
+                    100.0,
+                    _safe_float(
+                        value,
+                        0.0,
+                    ),
+                ),
             )
-        except Exception:
-            pass
 
-        return {
-            "status": "error",
-            "errors": [
-                *state.get("errors", []),
-                message,
-            ],
-            "error": message,
-        }
+    coverage = state.get("coverage")
 
-    # ------------------------------------------------------------------------
-    # Normalize agent output.
-    # ------------------------------------------------------------------------
+    if isinstance(coverage, dict):
 
-    if result is None:
-        result = {}
+        for key in (
+            "coverage_percent",
+            "coverage_percentage",
+            "percentage",
+            "score",
+        ):
 
-    if not isinstance(result, dict):
-        try:
-            result = dict(result)
-        except Exception:
-            result = {
-                "agent_output": result,
-            }
+            if key in coverage:
 
-    update: Dict[str, Any] = dict(result)
+                return max(
+                    0.0,
+                    min(
+                        100.0,
+                        _safe_float(
+                            coverage.get(key),
+                            0.0,
+                        ),
+                    ),
+                )
 
-    # Keep workflow status alive unless an agent explicitly changed it.
-    if "status" not in update:
-        update["status"] = "running"
+    return 0.0
 
-    try:
-        add_agent_trace(
-            state,
-            agent_name,
-            "complete",
+
+def _has_coverage_gaps(
+    state: Dict[str, Any],
+) -> bool:
+
+    gaps = state.get(
+        "coverage_gaps"
+    )
+
+    if gaps is None:
+        return False
+
+    if isinstance(
+        gaps,
+        (
+            list,
+            tuple,
+            set,
+            dict,
+        ),
+    ):
+        return len(gaps) > 0
+
+    return bool(gaps)
+
+
+def _mutation_enabled(
+    state: Dict[str, Any],
+) -> bool:
+
+    if "run_mutation" in state:
+
+        return _safe_bool(
+            state.get(
+                "run_mutation"
+            ),
+            False,
         )
 
-        add_agent_log(
-            state,
-            f"{agent_name}: completed",
+    return _safe_bool(
+        state.get(
+            "enable_mutation"
+        ),
+        False,
+    )
+
+
+def _formal_enabled(
+    state: Dict[str, Any],
+) -> bool:
+
+    if "run_formal" in state:
+
+        return _safe_bool(
+            state.get(
+                "run_formal"
+            ),
+            False,
         )
-    except Exception:
-        pass
 
-    return update
-
-
-# ============================================================================
-# Node functions
-# ============================================================================
-
-def _rtl_analysis_node(
-    state: VerificationState,
-) -> Dict[str, Any]:
-    return _run_agent(
-        state,
-        AGENTS["rtl_analysis"],
-        "rtl_analysis",
+    return _safe_bool(
+        state.get(
+            "enable_formal"
+        ),
+        False,
     )
 
 
-def _planning_node(
-    state: VerificationState,
-) -> Dict[str, Any]:
-    return _run_agent(
-        state,
-        AGENTS["planning"],
-        "planning",
-    )
+def _failure_text(
+    state: Dict[str, Any],
+) -> str:
 
+    parts = []
 
-def _test_generation_node(
-    state: VerificationState,
-) -> Dict[str, Any]:
-    return _run_agent(
-        state,
-        AGENTS["test_generation"],
-        "test_generation",
-    )
+    for key in (
+        "failure_type",
+        "root_cause",
+    ):
 
+        value = state.get(key)
 
-def _testbench_generation_node(
-    state: VerificationState,
-) -> Dict[str, Any]:
-    return _run_agent(
-        state,
-        AGENTS["testbench_generation"],
-        "testbench_generation",
-    )
+        if value:
+            parts.append(
+                str(value)
+            )
 
-
-def _simulation_node(
-    state: VerificationState,
-) -> Dict[str, Any]:
-    return _run_agent(
-        state,
-        AGENTS["simulation"],
-        "simulation",
-    )
-
-
-def _failure_analysis_node(
-    state: VerificationState,
-) -> Dict[str, Any]:
-    return _run_agent(
-        state,
-        AGENTS["failure_analysis"],
+    for key in (
         "failure_analysis",
+        "failure",
+    ):
+
+        value = state.get(key)
+
+        if isinstance(value, dict):
+
+            parts.extend(
+                str(v)
+                for v in value.values()
+            )
+
+        elif value:
+
+            parts.append(
+                str(value)
+            )
+
+    return " ".join(parts).lower()
+
+
+def _rtl_failure(
+    state: Dict[str, Any],
+) -> bool:
+
+    text = _failure_text(state)
+
+    rtl_keywords = (
+        "rtl",
+        "design bug",
+        "design error",
+        "functional bug",
+        "functional error",
+        "wrong output",
+        "incorrect output",
+        "wrong behavior",
+        "register",
+        "counter",
+        "fsm",
+        "state machine",
+        "always_ff",
+        "always_comb",
+        "always block",
+        "nonblocking",
+        "blocking assignment",
+        "reset logic",
+        "clock logic",
+        "overflow",
+        "underflow",
+        "protocol violation",
+    )
+
+    testbench_keywords = (
+        "testbench",
+        "test bench",
+        "stimulus",
+        "checker",
+        "expected value",
+        "verification environment",
+    )
+
+    if any(
+        keyword in text
+        for keyword in rtl_keywords
+    ):
+        return True
+
+    if any(
+        keyword in text
+        for keyword in testbench_keywords
+    ):
+        return False
+
+    return False
+
+
+def _repair_changed_rtl(
+    state: Dict[str, Any],
+) -> bool:
+
+    repaired = state.get(
+        "repaired_rtl",
+        "",
+    )
+
+    current = state.get(
+        "rtl_code",
+        "",
+    )
+
+    if not isinstance(
+        repaired,
+        str,
+    ):
+        repaired = ""
+
+    if not isinstance(
+        current,
+        str,
+    ):
+        current = ""
+
+    if not repaired.strip():
+        return False
+
+    if repaired.strip() != current.strip():
+        return True
+
+    return _safe_bool(
+        state.get(
+            "repair_applied"
+        ),
+        False,
     )
 
 
-def _coverage_node(
-    state: VerificationState,
-) -> Dict[str, Any]:
-    return _run_agent(
-        state,
-        AGENTS["coverage"],
-        "coverage",
-    )
+# =============================================================================
+# Simulation
+# =============================================================================
 
-
-def _red_team_node(
-    state: VerificationState,
-) -> Dict[str, Any]:
-    return _run_agent(
-        state,
-        AGENTS["red_team"],
-        "red_team",
-    )
-
-
-def _mutation_node(
-    state: VerificationState,
-) -> Dict[str, Any]:
-    return _run_agent(
-        state,
-        AGENTS["mutation"],
-        "mutation",
-    )
-
-
-def _formal_node(
-    state: VerificationState,
-) -> Dict[str, Any]:
-    return _run_agent(
-        state,
-        AGENTS["formal"],
-        "formal",
-    )
-
-
-def _bug_localization_node(
-    state: VerificationState,
-) -> Dict[str, Any]:
-    return _run_agent(
-        state,
-        AGENTS["bug_localization"],
-        "bug_localization",
-    )
-
-
-def _rtl_repair_node(
-    state: VerificationState,
-) -> Dict[str, Any]:
-    return _run_agent(
-        state,
-        AGENTS["rtl_repair"],
-        "rtl_repair",
-    )
-
-
-def _judge_node(
-    state: VerificationState,
-) -> Dict[str, Any]:
-    return _run_agent(
-        state,
-        AGENTS["judge"],
-        "judge",
-    )
-
-
-# ============================================================================
-# Conditional-edge adapters
-# ============================================================================
-
-def _simulation_route(
-    state: VerificationState,
-) -> str:
-    return _router_to_langgraph(
-        route_after_simulation(state)
-    )
-
-
-def _failure_route(
-    state: VerificationState,
-) -> str:
-    return _router_to_langgraph(
-        route_after_failure(state)
-    )
-
-
-def _repair_route(
-    state: VerificationState,
-) -> str:
-    return _router_to_langgraph(
-        route_after_repair(state)
-    )
-
-
-def _bug_localization_route(
-    state: VerificationState,
-) -> str:
-    return _router_to_langgraph(
-        route_after_bug_localization(state)
-    )
-
-
-def _coverage_route(
-    state: VerificationState,
-) -> str:
-    return _router_to_langgraph(
-        route_after_coverage(state)
-    )
-
-
-def _red_team_route(
-    state: VerificationState,
-) -> str:
-    return _router_to_langgraph(
-        route_after_red_team(state)
-    )
-
-
-def _mutation_route(
-    state: VerificationState,
-) -> str:
-    return _router_to_langgraph(
-        route_after_mutation(state)
-    )
-
-
-def _formal_route(
-    state: VerificationState,
-) -> str:
-    return _router_to_langgraph(
-        route_after_formal(state)
-    )
-
-
-def _judge_route(
-    state: VerificationState,
-) -> str:
-    return _router_to_langgraph(
-        route_after_judge(state)
-    )
-
-
-def _router_to_langgraph(
-    destination: str,
+def route_after_simulation(
+    state: Dict[str, Any],
 ) -> str:
     """
-    Convert router.py's END marker to LangGraph's END sentinel.
+    Simulation result:
 
-    All other node names pass through unchanged.
+        PASS -> Coverage
+
+        FAIL -> Failure Analysis
     """
 
-    if destination == ROUTER_END:
-        return LANGGRAPH_END
+    if not isinstance(
+        state,
+        dict,
+    ):
+        return FAILURE_ANALYSIS
 
-    return destination
+    passed = state.get(
+        "simulation_passed"
+    )
+
+    if passed is None:
+        passed = state.get(
+            "test_passed"
+        )
+
+    if passed is None:
+
+        result = state.get(
+            "simulation_result"
+        )
+
+        if isinstance(
+            result,
+            dict,
+        ):
+
+            passed = result.get(
+                "passed",
+                result.get(
+                    "success",
+                    False,
+                ),
+            )
+
+    if _safe_bool(
+        passed,
+        False,
+    ):
+        return COVERAGE
+
+    return FAILURE_ANALYSIS
 
 
-# ============================================================================
-# Graph construction
-# ============================================================================
+# =============================================================================
+# Failure analysis
+# =============================================================================
 
-def build_workflow(
-    agents: Optional[Dict[str, Any]] = None,
-):
+def route_after_failure(
+    state: Dict[str, Any],
+) -> str:
     """
-    Build and compile the complete verification workflow.
+    Failure:
+
+        RTL problem -> RTL Repair
+
+        Otherwise -> Test Generation
+
+        Budget exhausted -> END
     """
 
-    global AGENTS
+    if not isinstance(
+        state,
+        dict,
+    ):
+        return END
 
-    if agents is None:
-        agents = _build_agents()
+    if iteration_limit_reached(
+        state
+    ):
+        return END
 
-    AGENTS = agents
+    if _rtl_failure(
+        state
+    ):
+        return RTL_REPAIR
 
-    graph = StateGraph(VerificationState)
+    return TEST_GENERATION
 
-    # ------------------------------------------------------------------------
-    # Nodes
-    # ------------------------------------------------------------------------
 
-    graph.add_node(
-        "rtl_analysis",
-        _rtl_analysis_node,
+# =============================================================================
+# Repair
+# =============================================================================
+
+def route_after_repair(
+    state: Dict[str, Any],
+) -> str:
+    """
+    Repair:
+
+        Changed RTL -> Bug Localization
+
+        No changed RTL -> Test Generation
+
+        Budget exhausted -> END
+    """
+
+    if not isinstance(
+        state,
+        dict,
+    ):
+        return END
+
+    if iteration_limit_reached(
+        state
+    ):
+        return END
+
+    if _repair_changed_rtl(
+        state
+    ):
+        return BUG_LOCALIZATION
+
+    return TEST_GENERATION
+
+
+# =============================================================================
+# Bug localization
+# =============================================================================
+
+def route_after_bug_localization(
+    state: Dict[str, Any],
+) -> str:
+
+    if not isinstance(
+        state,
+        dict,
+    ):
+        return END
+
+    if iteration_limit_reached(
+        state
+    ):
+        return END
+
+    return TEST_GENERATION
+
+
+# =============================================================================
+# Coverage
+# =============================================================================
+
+def route_after_coverage(
+    state: Dict[str, Any],
+) -> str:
+    """
+    Coverage:
+
+        insufficient -> Test Generation
+
+        sufficient -> Red Team
+
+        budget exhausted -> END
+    """
+
+    if not isinstance(
+        state,
+        dict,
+    ):
+        return END
+
+    if iteration_limit_reached(
+        state
+    ):
+        return END
+
+    score = _coverage_score(
+        state
     )
 
-    graph.add_node(
-        "planning",
-        _planning_node,
+    target = _safe_float(
+        state.get(
+            "coverage_target",
+            95.0,
+        ),
+        95.0,
     )
 
-    graph.add_node(
-        "test_generation",
-        _test_generation_node,
+    if (
+        _has_coverage_gaps(state)
+        or score < target
+    ):
+        return TEST_GENERATION
+
+    return RED_TEAM
+
+
+# =============================================================================
+# Red team
+# =============================================================================
+
+def route_after_red_team(
+    state: Dict[str, Any],
+) -> str:
+    """
+    Red Team:
+
+        mutation enabled -> Mutation
+
+        formal enabled -> Formal
+
+        otherwise -> Judge
+    """
+
+    if not isinstance(
+        state,
+        dict,
+    ):
+        return JUDGE
+
+    if _mutation_enabled(
+        state
+    ):
+        return MUTATION
+
+    if _formal_enabled(
+        state
+    ):
+        return FORMAL
+
+    return JUDGE
+
+
+# =============================================================================
+# Mutation
+# =============================================================================
+
+def route_after_mutation(
+    state: Dict[str, Any],
+) -> str:
+
+    if not isinstance(
+        state,
+        dict,
+    ):
+        return JUDGE
+
+    if _formal_enabled(
+        state
+    ):
+        return FORMAL
+
+    return JUDGE
+
+
+# =============================================================================
+# Formal
+# =============================================================================
+
+def route_after_formal(
+    state: Dict[str, Any],
+) -> str:
+
+    return JUDGE
+
+
+# =============================================================================
+# Judge
+# =============================================================================
+
+def route_after_judge(
+    state: Dict[str, Any],
+) -> str:
+    """
+    Judge:
+
+        PASS -> END
+
+        FAIL + RTL problem -> RTL Repair
+
+        FAIL + verification problem -> Test Generation
+
+        NEED_MORE -> Test Generation
+
+        budget exhausted -> END
+    """
+
+    if not isinstance(
+        state,
+        dict,
+    ):
+        return END
+
+    verdict = _get_judge_verdict(
+        state
     )
 
-    graph.add_node(
-        "testbench_generation",
-        _testbench_generation_node,
+    if verdict == "PASS":
+        return END
+
+    if iteration_limit_reached(
+        state
+    ):
+        return END
+
+    if verdict == "FAIL":
+
+        if _rtl_failure(
+            state
+        ):
+            return RTL_REPAIR
+
+        return TEST_GENERATION
+
+    if verdict == "NEED_MORE":
+        return TEST_GENERATION
+
+    return TEST_GENERATION
+
+
+# =============================================================================
+# Generic helpers
+# =============================================================================
+
+def should_continue(
+    state: Optional[Dict[str, Any]],
+) -> bool:
+
+    if not state:
+        return False
+
+    if iteration_limit_reached(
+        state
+    ):
+        return False
+
+    status = str(
+        state.get(
+            "status",
+            "",
+        )
+    ).lower()
+
+    if status in {
+        "error",
+        "stopped",
+    }:
+        return False
+
+    return True
+
+
+def get_final_verdict(
+    state: Optional[Dict[str, Any]],
+) -> str:
+
+    if not state:
+        return "UNKNOWN"
+
+    return _get_judge_verdict(
+        state
     )
 
-    graph.add_node(
-        "simulation",
-        _simulation_node,
-    )
 
-    graph.add_node(
-        "failure_analysis",
-        _failure_analysis_node,
-    )
-
-    graph.add_node(
-        "coverage",
-        _coverage_node,
-    )
-
-    graph.add_node(
-        "red_team",
-        _red_team_node,
-    )
-
-    graph.add_node(
-        "mutation",
-        _mutation_node,
-    )
-
-    graph.add_node(
-        "formal",
-        _formal_node,
-    )
-
-    graph.add_node(
-        "bug_localization",
-        _bug_localization_node,
-    )
-
-    graph.add_node(
-        "rtl_repair",
-        _rtl_repair_node,
-    )
-
-    graph.add_node(
-        "judge",
-        _judge_node,
-    )
-
-    # ------------------------------------------------------------------------
-    # Initial linear pipeline
-    #
-    # START
-    #   ↓
-    # RTL Analysis
-    #   ↓
-    # Planning
-    #   ↓
-    # Test Generation
-    #   ↓
-    # Testbench Generation
-    #   ↓
-    # Simulation
-    # ------------------------------------------------------------------------
-
-    graph.add_edge(
-        START,
-        "rtl_analysis",
-    )
-
-    graph.add_edge(
-        "rtl_analysis",
-        "planning",
-    )
-
-    graph.add_edge(
-        "planning",
-        "test_generation",
-    )
-
-    graph.add_edge(
-        "test_generation",
-        "testbench_generation",
-    )
-
-    graph.add_edge(
-        "testbench_generation",
-        "simulation",
-    )
-
-    # ------------------------------------------------------------------------
-    # Simulation routing
-    #
-    # This routing decision is implemented ONLY in router.py.
-    # ------------------------------------------------------------------------
-
-    graph.add_conditional_edges(
-        "simulation",
-        _simulation_route,
-        {
-            "coverage": "coverage",
-            "failure_analysis": "failure_analysis",
-            LANGGRAPH_END: LANGGRAPH_END,
-        },
-    )
-
-    # ------------------------------------------------------------------------
-    # Failure analysis routing
-    # ------------------------------------------------------------------------
-
-    graph.add_conditional_edges(
-        "failure_analysis",
-        _failure_route,
-        {
-            "rtl_repair": "rtl_repair",
-            "test_generation": "test_generation",
-            LANGGRAPH_END: LANGGRAPH_END,
-        },
-    )
-
-    # ------------------------------------------------------------------------
-    # RTL repair routing
-    # ------------------------------------------------------------------------
-
-    graph.add_conditional_edges(
-        "rtl_repair",
-        _repair_route,
-        {
-            "bug_localization": "bug_localization",
-            "test_generation": "test_generation",
-            LANGGRAPH_END: LANGGRAPH_END,
-        },
-    )
-
-    # ------------------------------------------------------------------------
-    # Bug localization
-    # ------------------------------------------------------------------------
-
-    graph.add_conditional_edges(
-        "bug_localization",
-        _bug_localization_route,
-        {
-            "test_generation": "test_generation",
-            LANGGRAPH_END: LANGGRAPH_END,
-        },
-    )
-
-    # ------------------------------------------------------------------------
-    # Coverage routing
-    # ------------------------------------------------------------------------
-
-    graph.add_conditional_edges(
-        "coverage",
-        _coverage_route,
-        {
-            "test_generation": "test_generation",
-            "red_team": "red_team",
-            LANGGRAPH_END: LANGGRAPH_END,
-        },
-    )
-
-    # ------------------------------------------------------------------------
-    # Red-team routing
-    # ------------------------------------------------------------------------
-
-    graph.add_conditional_edges(
-        "red_team",
-        _red_team_route,
-        {
-            "mutation": "mutation",
-            "formal": "formal",
-            "judge": "judge",
-            LANGGRAPH_END: LANGGRAPH_END,
-        },
-    )
-
-    # ------------------------------------------------------------------------
-    # Mutation routing
-    # ------------------------------------------------------------------------
-
-    graph.add_conditional_edges(
-        "mutation",
-        _mutation_route,
-        {
-            "formal": "formal",
-            "judge": "judge",
-            LANGGRAPH_END: LANGGRAPH_END,
-        },
-    )
-
-    # ------------------------------------------------------------------------
-    # Formal routing
-    # ------------------------------------------------------------------------
-
-    graph.add_conditional_edges(
-        "formal",
-        _formal_route,
-        {
-            "judge": "judge",
-            LANGGRAPH_END: LANGGRAPH_END,
-        },
-    )
-
-    # ------------------------------------------------------------------------
-    # Judge routing
-    # ------------------------------------------------------------------------
-
-    graph.add_conditional_edges(
-        "judge",
-        _judge_route,
-        {
-            "rtl_repair": "rtl_repair",
-            "test_generation": "test_generation",
-            "bug_localization": "bug_localization",
-            LANGGRAPH_END: LANGGRAPH_END,
-        },
-    )
-
-    return graph.compile()
-
-
-# ============================================================================
-# Build default workflow
-# ============================================================================
-
-AGENTS: Dict[str, Any] = {}
-
-WORKFLOW_ERROR: Optional[Exception] = None
-
-
-try:
-    workflow = build_workflow()
-
-except Exception as exc:
-    WORKFLOW_ERROR = exc
-    workflow = None
-
-
-# ============================================================================
+# =============================================================================
 # Compatibility aliases
-# ============================================================================
+# =============================================================================
 
-graph = workflow
-app = workflow
-
-verification_workflow = workflow
-verification_graph = workflow
-
-
-def create_workflow():
-    """Compatibility factory."""
-
-    return build_workflow()
+route_simulation = route_after_simulation
+route_failure = route_after_failure
+route_repair = route_after_repair
+route_bug_localization = route_after_bug_localization
+route_coverage = route_after_coverage
+route_red_team = route_after_red_team
+route_mutation = route_after_mutation
+route_formal = route_after_formal
+route_judge = route_after_judge
 
 
-def create_graph():
-    """Compatibility factory."""
-
-    return build_workflow()
-
-
-def build_graph():
-    """Compatibility factory."""
-
-    return build_workflow()
-
-
-# IMPORTANT:
-# graph/__init__.py from earlier versions may import this exact name.
-
-def build_verification_workflow():
-    """Backward-compatible verification workflow factory."""
-
-    return build_workflow()
-
-
-def create_verification_workflow():
-    """Backward-compatible verification workflow factory."""
-
-    return build_workflow()
-
-
-# ============================================================================
-# Workflow execution helper
-# ============================================================================
-
-def run_workflow(
-    state: VerificationState,
-    **kwargs: Any,
-) -> Any:
-    """
-    Execute the compiled workflow.
-
-    This helper is intentionally compatible with both:
-        workflow.invoke(...)
-        workflow.stream(...)
-    """
-
-    if workflow is None:
-        raise RuntimeError(
-            "Verification workflow could not be loaded."
-        ) from WORKFLOW_ERROR
-
-    return workflow.invoke(
-        state,
-        **kwargs,
-    )
-
-
-# ============================================================================
+# =============================================================================
 # Public exports
-# ============================================================================
+# =============================================================================
 
 __all__ = [
-    "workflow",
-    "graph",
-    "app",
+    "END",
 
-    "verification_workflow",
-    "verification_graph",
+    "RTL_ANALYSIS",
+    "PLANNING",
 
-    "build_workflow",
-    "create_workflow",
-    "build_graph",
-    "create_graph",
+    "TEST_GENERATION",
+    "TESTBENCH_GENERATION",
+    "SIMULATION",
 
-    "build_verification_workflow",
-    "create_verification_workflow",
+    "FAILURE_ANALYSIS",
+    "BUG_LOCALIZATION",
+    "RTL_REPAIR",
 
-    "run_workflow",
+    "COVERAGE",
+    "RED_TEAM",
+    "MUTATION",
+    "FORMAL",
+    "JUDGE",
 
-    "AGENTS",
-    "WORKFLOW_ERROR",
+    "iteration_limit_reached",
+
+    "route_after_simulation",
+    "route_after_failure",
+    "route_after_repair",
+    "route_after_bug_localization",
+    "route_after_coverage",
+    "route_after_red_team",
+    "route_after_mutation",
+    "route_after_formal",
+    "route_after_judge",
+
+    "route_simulation",
+    "route_failure",
+    "route_repair",
+    "route_bug_localization",
+    "route_coverage",
+    "route_red_team",
+    "route_mutation",
+    "route_formal",
+    "route_judge",
+
+    "should_continue",
+    "get_final_verdict",
 ]
 
