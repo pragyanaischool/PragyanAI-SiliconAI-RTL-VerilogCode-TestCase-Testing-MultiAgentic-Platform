@@ -30,6 +30,8 @@ from typing import Any, Dict
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+PROJECT_ROOT = BASE_DIR
+
 CONFIG_DIR = BASE_DIR / "config"
 AGENTS_DIR = BASE_DIR / "agents"
 GRAPH_DIR = BASE_DIR / "graph"
@@ -51,6 +53,19 @@ REPORT_DIR = RUNTIME_DIR / "reports"
 
 
 # ============================================================================
+# LEGACY / COMPATIBILITY PATH ALIASES
+# ============================================================================
+
+RUN_ROOT = RUNS_DIR
+TEMP_ROOT = TEMP_DIR
+LOG_ROOT = LOG_DIR
+REPORT_ROOT = REPORT_DIR
+
+LOGGING_ROOT = LOGGING_DIR
+REPORTS_ROOT = REPORTS_DIR
+
+
+# ============================================================================
 # APPLICATION IDENTITY
 # ============================================================================
 
@@ -58,7 +73,11 @@ APP_NAME = "PragyanAI SiliconAI"
 
 APP_VERSION = "1.0.0"
 
-PROJECT_NAME = "PragyanAI SiliconAI - Agentic RTL Verification"
+VERSION = APP_VERSION
+
+PROJECT_NAME = (
+    "PragyanAI SiliconAI - Agentic RTL Verification"
+)
 
 APP_DESCRIPTION = (
     "Agentic RTL Verification Platform for AI Test Generation, "
@@ -70,15 +89,20 @@ ENVIRONMENT = os.getenv(
     os.getenv("APP_ENV", "production"),
 )
 
-DEBUG = os.getenv(
-    "DEBUG",
-    "false",
-).lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
+APP_ENV = ENVIRONMENT
+
+DEBUG = (
+    os.getenv(
+        "DEBUG",
+        "false",
+    ).lower()
+    in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+)
 
 
 # ============================================================================
@@ -90,15 +114,20 @@ GROQ_API_KEY = os.getenv(
     "",
 ).strip()
 
+
 GROQ_MODEL = os.getenv(
     "GROQ_MODEL",
     "openai/gpt-oss-120b",
 ).strip()
 
-# Compatibility aliases
+
+# Compatibility aliases.
+
 MODEL_NAME = GROQ_MODEL
 LLM_MODEL = GROQ_MODEL
 DEFAULT_MODEL = GROQ_MODEL
+GROQ_MODEL_NAME = GROQ_MODEL
+
 
 LLM_TEMPERATURE = float(
     os.getenv(
@@ -108,6 +137,8 @@ LLM_TEMPERATURE = float(
 )
 
 DEFAULT_TEMPERATURE = LLM_TEMPERATURE
+TEMPERATURE = LLM_TEMPERATURE
+
 
 LLM_MAX_TOKENS = int(
     os.getenv(
@@ -117,6 +148,7 @@ LLM_MAX_TOKENS = int(
 )
 
 DEFAULT_MAX_TOKENS = LLM_MAX_TOKENS
+MAX_TOKENS = LLM_MAX_TOKENS
 
 
 # ============================================================================
@@ -139,15 +171,18 @@ AGENT_TOKEN_LIMITS: Dict[str, int] = {
     "verification_judge": 1400,
 }
 
+
 AGENT_MAX_TOKENS = AGENT_TOKEN_LIMITS
 TOKEN_LIMITS = AGENT_TOKEN_LIMITS
 
 
 # ============================================================================
-# INDIVIDUAL TOKEN CONSTANTS
+# INDIVIDUAL TOKEN COMPATIBILITY CONSTANTS
 # ============================================================================
 
-RTL_ANALYZER_MAX_TOKENS = AGENT_TOKEN_LIMITS["rtl_analyzer"]
+RTL_ANALYZER_MAX_TOKENS = (
+    AGENT_TOKEN_LIMITS["rtl_analyzer"]
+)
 
 VERIFICATION_PLANNER_MAX_TOKENS = (
     AGENT_TOKEN_LIMITS["verification_planner"]
@@ -218,6 +253,7 @@ AGENT_TEMPERATURES: Dict[str, float] = {
     "verification_judge": 0.0,
 }
 
+
 RTL_ANALYZER_TEMPERATURE = (
     AGENT_TEMPERATURES["rtl_analyzer"]
 )
@@ -275,7 +311,7 @@ VERIFICATION_JUDGE_TEMPERATURE = (
 # PROMPT / CONTEXT LIMITS
 # ============================================================================
 
-# Character limits, not token limits.
+# These are CHARACTER limits, not token limits.
 
 MAX_RTL_CHARS = int(
     os.getenv(
@@ -330,12 +366,11 @@ MAX_AGENT_CONTEXT_CHARS = int(
 # ============================================================================
 # LLM-SPECIFIC CONTEXT LIMITS
 # ============================================================================
+
+# Compatibility names used by agent implementations.
 #
-# Compatibility names required by agent implementations.
-#
-# These are character limits, not token limits.
-# They default to the general context limits above.
-# ============================================================================
+# These values are character limits, not token limits.
+# They intentionally map to the normal context limits above.
 
 MAX_RTL_CHARS_FOR_LLM = int(
     os.getenv(
@@ -388,29 +423,33 @@ MAX_AGENT_CONTEXT_CHARS_FOR_LLM = int(
 
 
 # ============================================================================
-# COMPATIBILITY CONTEXT ALIASES
+# LEGACY CONTEXT ALIASES
 # ============================================================================
 
 RTL_CHAR_LIMIT = MAX_RTL_CHARS
-SPECIFICATION_CHAR_LIMIT = MAX_SPECIFICATION_CHARS
-TESTBENCH_CHAR_LIMIT = MAX_TESTBENCH_CHARS
-SIMULATION_OUTPUT_CHAR_LIMIT = MAX_SIMULATION_OUTPUT_CHARS
-AGENT_CONTEXT_CHAR_LIMIT = MAX_AGENT_CONTEXT_CHARS
 
-RTL_LLM_CHAR_LIMIT = MAX_RTL_CHARS_FOR_LLM
-SPECIFICATION_LLM_CHAR_LIMIT = MAX_SPECIFICATION_CHARS_FOR_LLM
-TESTBENCH_LLM_CHAR_LIMIT = MAX_TESTBENCH_CHARS_FOR_LLM
-SIMULATION_OUTPUT_LLM_CHAR_LIMIT = (
-    MAX_SIMULATION_OUTPUT_CHARS_FOR_LLM
+SPECIFICATION_CHAR_LIMIT = (
+    MAX_SPECIFICATION_CHARS
 )
-FAILURE_OUTPUT_LLM_CHAR_LIMIT = (
-    MAX_FAILURE_OUTPUT_CHARS_FOR_LLM
+
+TESTBENCH_CHAR_LIMIT = (
+    MAX_TESTBENCH_CHARS
 )
-COVERAGE_OUTPUT_LLM_CHAR_LIMIT = (
-    MAX_COVERAGE_OUTPUT_CHARS_FOR_LLM
+
+SIMULATION_OUTPUT_CHAR_LIMIT = (
+    MAX_SIMULATION_OUTPUT_CHARS
 )
-AGENT_CONTEXT_LLM_CHAR_LIMIT = (
-    MAX_AGENT_CONTEXT_CHARS_FOR_LLM
+
+FAILURE_OUTPUT_CHAR_LIMIT = (
+    MAX_FAILURE_OUTPUT_CHARS
+)
+
+COVERAGE_OUTPUT_CHAR_LIMIT = (
+    MAX_COVERAGE_OUTPUT_CHARS
+)
+
+AGENT_CONTEXT_CHAR_LIMIT = (
+    MAX_AGENT_CONTEXT_CHARS
 )
 
 
@@ -438,10 +477,14 @@ YOSYS_EXECUTABLE = os.getenv(
     "yosys",
 )
 
+
+# Compatibility aliases.
+
 IVERILOG = IVERILOG_EXECUTABLE
 VVP = VVP_EXECUTABLE
 VERILATOR = VERILATOR_EXECUTABLE
 YOSYS = YOSYS_EXECUTABLE
+
 
 SUPPORTED_EDA_TOOLS = {
     "iverilog",
@@ -454,12 +497,8 @@ SUPPORTED_EDA_TOOLS = {
 # ============================================================================
 # FORMAL VERIFICATION
 # ============================================================================
-#
-# SymbiYosys is NOT required.
-#
-# Formal is optional and should gracefully report unavailable if the
-# selected formal backend is not installed.
-# ============================================================================
+
+# SymbiYosys is intentionally NOT required.
 
 FORMAL_ENABLED_BY_DEFAULT = (
     os.getenv(
@@ -474,8 +513,10 @@ FORMAL_ENABLED_BY_DEFAULT = (
     }
 )
 
-# Backwards-compatible placeholders.
-# They intentionally do not point to an executable.
+
+# Backwards compatibility only.
+# These are NOT executable requirements.
+
 SYMBIYOSYS_EXECUTABLE = None
 SBY_EXECUTABLE = None
 
@@ -523,6 +564,9 @@ FORMAL_TIMEOUT_SECONDS = int(
     )
 )
 
+
+# Compatibility aliases.
+
 SIM_TIMEOUT = SIMULATION_TIMEOUT_SECONDS
 FORMAL_TIMEOUT = FORMAL_TIMEOUT_SECONDS
 
@@ -552,24 +596,33 @@ VERIFICATION_SCORE_TARGET = float(
     )
 )
 
-# ---------------------------------------------------------------------------
-# IMPORTANT COMPATIBILITY FIX
-# ---------------------------------------------------------------------------
-#
-# Some agents import VERIFICATION_TARGET directly.
-#
-# Keep this alias so older/newer agent implementations both work.
-# ---------------------------------------------------------------------------
+
+# IMPORTANT:
+# Some older modules import VERIFICATION_TARGET.
+# Keep this alias.
 
 VERIFICATION_TARGET = VERIFICATION_SCORE_TARGET
 
+
+# Additional compatibility aliases.
+
 TARGET_COVERAGE = COVERAGE_TARGET
-TARGET_MUTATION_SCORE = MUTATION_TARGET
-TARGET_VERIFICATION_SCORE = VERIFICATION_SCORE_TARGET
+
+TARGET_MUTATION_SCORE = (
+    MUTATION_TARGET
+)
+
+TARGET_VERIFICATION_SCORE = (
+    VERIFICATION_SCORE_TARGET
+)
 
 COVERAGE_THRESHOLD = COVERAGE_TARGET
+
 MUTATION_THRESHOLD = MUTATION_TARGET
-VERIFICATION_THRESHOLD = VERIFICATION_SCORE_TARGET
+
+VERIFICATION_THRESHOLD = (
+    VERIFICATION_SCORE_TARGET
+)
 
 
 # ============================================================================
@@ -679,6 +732,7 @@ LOG_LEVEL = os.getenv(
     "INFO",
 ).upper()
 
+
 ENABLE_AGENT_LOGGING = (
     os.getenv(
         "ENABLE_AGENT_LOGGING",
@@ -691,6 +745,7 @@ ENABLE_AGENT_LOGGING = (
         "on",
     }
 )
+
 
 ENABLE_AGENT_TRACE = (
     os.getenv(
@@ -750,10 +805,15 @@ MAX_RTL_FILE_SIZE_BYTES = (
 # ============================================================================
 
 STATUS_INITIALIZED = "initialized"
+
 STATUS_RUNNING = "running"
+
 STATUS_COMPLETED = "completed"
+
 STATUS_FAILED = "failed"
+
 STATUS_ERROR = "error"
+
 STATUS_STOPPED = "stopped"
 
 
@@ -762,7 +822,9 @@ STATUS_STOPPED = "stopped"
 # ============================================================================
 
 VERDICT_PASS = "PASS"
+
 VERDICT_FAIL = "FAIL"
+
 VERDICT_NEED_MORE = "NEED_MORE"
 
 
@@ -771,12 +833,19 @@ VERDICT_NEED_MORE = "NEED_MORE"
 # ============================================================================
 
 FAILURE_RTL = "rtl"
+
 FAILURE_TESTBENCH = "testbench"
+
 FAILURE_TEST = "test"
+
 FAILURE_COMPILATION = "compilation"
+
 FAILURE_SIMULATION = "simulation"
+
 FAILURE_PROTOCOL = "protocol"
+
 FAILURE_COVERAGE = "coverage"
+
 FAILURE_UNKNOWN = "unknown"
 
 
@@ -806,9 +875,11 @@ RTL_EXTENSIONS = (
 
 def ensure_directories() -> None:
     """
-    Create runtime directories used by the application.
+    Create runtime directories.
 
     Safe for Streamlit Cloud.
+    Import failure is never caused by inability to
+    create runtime directories.
     """
 
     directories = [
@@ -826,8 +897,6 @@ def ensure_directories() -> None:
                 exist_ok=True,
             )
         except Exception:
-            # Never fail application import because a runtime directory
-            # cannot be created.
             pass
 
 
@@ -881,7 +950,7 @@ def tool_available(
     executable: str,
 ) -> bool:
     """
-    Return True when an executable is available on PATH.
+    Return True when executable is available on PATH.
     """
 
     if not executable:
@@ -946,12 +1015,9 @@ def get_settings_summary() -> Dict[str, Any]:
 
         "coverage_target": COVERAGE_TARGET,
         "mutation_target": MUTATION_TARGET,
+        "verification_target": VERIFICATION_TARGET,
         "verification_score_target": (
             VERIFICATION_SCORE_TARGET
-        ),
-
-        "verification_target": (
-            VERIFICATION_TARGET
         ),
 
         "default_max_iterations": (
@@ -959,6 +1025,7 @@ def get_settings_summary() -> Dict[str, Any]:
         ),
 
         "min_iterations": MIN_ITERATIONS,
+
         "max_iterations": MAX_ITERATIONS,
 
         "red_team_enabled": (
@@ -989,32 +1056,14 @@ def get_settings_summary() -> Dict[str, Any]:
             FORMAL_TIMEOUT_SECONDS
         ),
 
-        "eda_tools": get_available_eda_tools(),
+        "eda_tools": (
+            get_available_eda_tools()
+        ),
 
         "symbiyosys_enabled": False,
+
         "symbiyosys_required": False,
     }
-
-
-# ============================================================================
-# GLOBAL COMPATIBILITY ALIASES
-# ============================================================================
-
-APP_ENV = ENVIRONMENT
-
-VERSION = APP_VERSION
-
-GROQ_MODEL_NAME = GROQ_MODEL
-
-MAX_TOKENS = LLM_MAX_TOKENS
-
-TEMPERATURE = LLM_TEMPERATURE
-
-COVERAGE = COVERAGE_TARGET
-
-MUTATION_SCORE = MUTATION_TARGET
-
-VERIFICATION_SCORE = VERIFICATION_SCORE_TARGET
 
 
 # ============================================================================
@@ -1030,283 +1079,26 @@ ensure_directories()
 
 __all__ = [
 
-    # ------------------------------------------------------------------------
+    # ------------------------------------------------------------------
     # Application
-    # ------------------------------------------------------------------------
+    # ------------------------------------------------------------------
 
     "APP_NAME",
     "APP_VERSION",
+    "VERSION",
     "PROJECT_NAME",
     "APP_DESCRIPTION",
     "ENVIRONMENT",
     "APP_ENV",
     "DEBUG",
-    "VERSION",
 
-    # ------------------------------------------------------------------------
-    # LLM
-    # ------------------------------------------------------------------------
-
-    "GROQ_API_KEY",
-    "GROQ_MODEL",
-    "GROQ_MODEL_NAME",
-    "MODEL_NAME",
-    "LLM_MODEL",
-    "DEFAULT_MODEL",
-
-    "LLM_TEMPERATURE",
-    "DEFAULT_TEMPERATURE",
-    "TEMPERATURE",
-
-    "LLM_MAX_TOKENS",
-    "DEFAULT_MAX_TOKENS",
-    "MAX_TOKENS",
-
-    # ------------------------------------------------------------------------
-    # Agent limits
-    # ------------------------------------------------------------------------
-
-    "AGENT_TOKEN_LIMITS",
-    "AGENT_MAX_TOKENS",
-    "TOKEN_LIMITS",
-
-    "RTL_ANALYZER_MAX_TOKENS",
-    "VERIFICATION_PLANNER_MAX_TOKENS",
-    "TEST_GENERATOR_MAX_TOKENS",
-    "TESTBENCH_GENERATOR_MAX_TOKENS",
-    "SIMULATOR_AGENT_MAX_TOKENS",
-    "FAILURE_ANALYZER_MAX_TOKENS",
-    "COVERAGE_AGENT_MAX_TOKENS",
-    "RED_TEAM_AGENT_MAX_TOKENS",
-    "MUTATION_AGENT_MAX_TOKENS",
-    "FORMAL_AGENT_MAX_TOKENS",
-    "BUG_LOCALIZATION_AGENT_MAX_TOKENS",
-    "RTL_REPAIR_AGENT_MAX_TOKENS",
-    "VERIFICATION_JUDGE_MAX_TOKENS",
-
-    # ------------------------------------------------------------------------
-    # Agent temperatures
-    # ------------------------------------------------------------------------
-
-    "AGENT_TEMPERATURES",
-
-    "RTL_ANALYZER_TEMPERATURE",
-    "VERIFICATION_PLANNER_TEMPERATURE",
-    "TEST_GENERATOR_TEMPERATURE",
-    "TESTBENCH_GENERATOR_TEMPERATURE",
-    "SIMULATOR_AGENT_TEMPERATURE",
-    "FAILURE_ANALYZER_TEMPERATURE",
-    "COVERAGE_AGENT_TEMPERATURE",
-    "RED_TEAM_AGENT_TEMPERATURE",
-    "MUTATION_AGENT_TEMPERATURE",
-    "FORMAL_AGENT_TEMPERATURE",
-    "BUG_LOCALIZATION_AGENT_TEMPERATURE",
-    "RTL_REPAIR_AGENT_TEMPERATURE",
-    "VERIFICATION_JUDGE_TEMPERATURE",
-
-    # ------------------------------------------------------------------------
-    # Prompt/context limits
-    # ------------------------------------------------------------------------
-
-    "MAX_RTL_CHARS",
-    "MAX_SPECIFICATION_CHARS",
-    "MAX_TESTBENCH_CHARS",
-    "MAX_SIMULATION_OUTPUT_CHARS",
-    "MAX_FAILURE_OUTPUT_CHARS",
-    "MAX_COVERAGE_OUTPUT_CHARS",
-    "MAX_AGENT_CONTEXT_CHARS",
-
-    # ------------------------------------------------------------------------
-    # LLM-specific context limits
-    # ------------------------------------------------------------------------
-
-    "MAX_RTL_CHARS_FOR_LLM",
-    "MAX_SPECIFICATION_CHARS_FOR_LLM",
-    "MAX_TESTBENCH_CHARS_FOR_LLM",
-    "MAX_SIMULATION_OUTPUT_CHARS_FOR_LLM",
-    "MAX_FAILURE_OUTPUT_CHARS_FOR_LLM",
-    "MAX_COVERAGE_OUTPUT_CHARS_FOR_LLM",
-    "MAX_AGENT_CONTEXT_CHARS_FOR_LLM",
-
-    # ------------------------------------------------------------------------
-    # Context aliases
-    # ------------------------------------------------------------------------
-
-    "RTL_CHAR_LIMIT",
-    "SPECIFICATION_CHAR_LIMIT",
-    "TESTBENCH_CHAR_LIMIT",
-    "SIMULATION_OUTPUT_CHAR_LIMIT",
-    "AGENT_CONTEXT_CHAR_LIMIT",
-
-    "RTL_LLM_CHAR_LIMIT",
-    "SPECIFICATION_LLM_CHAR_LIMIT",
-    "TESTBENCH_LLM_CHAR_LIMIT",
-    "SIMULATION_OUTPUT_LLM_CHAR_LIMIT",
-    "FAILURE_OUTPUT_LLM_CHAR_LIMIT",
-    "COVERAGE_OUTPUT_LLM_CHAR_LIMIT",
-    "AGENT_CONTEXT_LLM_CHAR_LIMIT",
-
-    # ------------------------------------------------------------------------
-    # EDA
-    # ------------------------------------------------------------------------
-
-    "IVERILOG_EXECUTABLE",
-    "VVP_EXECUTABLE",
-    "VERILATOR_EXECUTABLE",
-    "YOSYS_EXECUTABLE",
-
-    "IVERILOG",
-    "VVP",
-    "VERILATOR",
-    "YOSYS",
-
-    "SUPPORTED_EDA_TOOLS",
-
-    # ------------------------------------------------------------------------
-    # Formal
-    # ------------------------------------------------------------------------
-
-    "FORMAL_ENABLED_BY_DEFAULT",
-
-    # Kept for compatibility only.
-    "SYMBIYOSYS_EXECUTABLE",
-    "SBY_EXECUTABLE",
-
-    "UNSUPPORTED_OR_OPTIONAL_TOOLS",
-
-    # ------------------------------------------------------------------------
-    # Timeouts
-    # ------------------------------------------------------------------------
-
-    "SIMULATION_TIMEOUT_SECONDS",
-    "COMPILE_TIMEOUT_SECONDS",
-    "VERILATOR_TIMEOUT_SECONDS",
-    "YOSYS_TIMEOUT_SECONDS",
-    "FORMAL_TIMEOUT_SECONDS",
-
-    "SIM_TIMEOUT",
-    "FORMAL_TIMEOUT",
-
-    # ------------------------------------------------------------------------
-    # Verification targets
-    # ------------------------------------------------------------------------
-
-    "COVERAGE_TARGET",
-    "MUTATION_TARGET",
-    "VERIFICATION_SCORE_TARGET",
-
-    # IMPORTANT compatibility name
-    "VERIFICATION_TARGET",
-
-    "TARGET_COVERAGE",
-    "TARGET_MUTATION_SCORE",
-    "TARGET_VERIFICATION_SCORE",
-
-    "COVERAGE_THRESHOLD",
-    "MUTATION_THRESHOLD",
-    "VERIFICATION_THRESHOLD",
-
-    "COVERAGE",
-    "MUTATION_SCORE",
-    "VERIFICATION_SCORE",
-
-    # ------------------------------------------------------------------------
-    # Iteration
-    # ------------------------------------------------------------------------
-
-    "DEFAULT_MAX_ITERATIONS",
-    "MIN_ITERATIONS",
-    "MAX_ITERATIONS",
-
-    # ------------------------------------------------------------------------
-    # Features
-    # ------------------------------------------------------------------------
-
-    "RED_TEAM_ENABLED_BY_DEFAULT",
-    "MUTATION_ENABLED_BY_DEFAULT",
-
-    # ------------------------------------------------------------------------
-    # RTL
-    # ------------------------------------------------------------------------
-
-    "DEFAULT_VERILOG_STANDARD",
-    "DEFAULT_TOP_MODULE",
-
-    # ------------------------------------------------------------------------
-    # Test defaults
-    # ------------------------------------------------------------------------
-
-    "DEFAULT_CLOCK_PERIOD_NS",
-    "DEFAULT_RESET_CYCLES",
-    "DEFAULT_TEST_TIMEOUT_NS",
-
-    # ------------------------------------------------------------------------
-    # Logging
-    # ------------------------------------------------------------------------
-
-    "LOG_LEVEL",
-    "ENABLE_AGENT_LOGGING",
-    "ENABLE_AGENT_TRACE",
-
-    # ------------------------------------------------------------------------
-    # Reporting
-    # ------------------------------------------------------------------------
-
-    "DEFAULT_REPORT_FORMAT",
-    "ENABLE_HTML_REPORT",
-
-    # ------------------------------------------------------------------------
-    # Security
-    # ------------------------------------------------------------------------
-
-    "MAX_UPLOAD_SIZE_MB",
-    "MAX_RTL_FILE_SIZE_BYTES",
-
-    # ------------------------------------------------------------------------
-    # Status
-    # ------------------------------------------------------------------------
-
-    "STATUS_INITIALIZED",
-    "STATUS_RUNNING",
-    "STATUS_COMPLETED",
-    "STATUS_FAILED",
-    "STATUS_ERROR",
-    "STATUS_STOPPED",
-
-    # ------------------------------------------------------------------------
-    # Verdicts
-    # ------------------------------------------------------------------------
-
-    "VERDICT_PASS",
-    "VERDICT_FAIL",
-    "VERDICT_NEED_MORE",
-
-    # ------------------------------------------------------------------------
-    # Failure categories
-    # ------------------------------------------------------------------------
-
-    "FAILURE_RTL",
-    "FAILURE_TESTBENCH",
-    "FAILURE_TEST",
-    "FAILURE_COMPILATION",
-    "FAILURE_SIMULATION",
-    "FAILURE_PROTOCOL",
-    "FAILURE_COVERAGE",
-    "FAILURE_UNKNOWN",
-
-    # ------------------------------------------------------------------------
-    # File extensions
-    # ------------------------------------------------------------------------
-
-    "VERILOG_EXTENSIONS",
-    "SYSTEMVERILOG_EXTENSIONS",
-    "RTL_EXTENSIONS",
-
-    # ------------------------------------------------------------------------
+    # ------------------------------------------------------------------
     # Paths
-    # ------------------------------------------------------------------------
+    # ------------------------------------------------------------------
 
     "BASE_DIR",
+    "PROJECT_ROOT",
+
     "CONFIG_DIR",
     "AGENTS_DIR",
     "GRAPH_DIR",
@@ -1326,9 +1118,261 @@ __all__ = [
     "LOG_DIR",
     "REPORT_DIR",
 
-    # ------------------------------------------------------------------------
+    "RUN_ROOT",
+    "TEMP_ROOT",
+    "LOG_ROOT",
+    "REPORT_ROOT",
+    "LOGGING_ROOT",
+    "REPORTS_ROOT",
+
+    # ------------------------------------------------------------------
+    # LLM
+    # ------------------------------------------------------------------
+
+    "GROQ_API_KEY",
+    "GROQ_MODEL",
+    "GROQ_MODEL_NAME",
+
+    "MODEL_NAME",
+    "LLM_MODEL",
+    "DEFAULT_MODEL",
+
+    "LLM_TEMPERATURE",
+    "DEFAULT_TEMPERATURE",
+    "TEMPERATURE",
+
+    "LLM_MAX_TOKENS",
+    "DEFAULT_MAX_TOKENS",
+    "MAX_TOKENS",
+
+    # ------------------------------------------------------------------
+    # Agent token limits
+    # ------------------------------------------------------------------
+
+    "AGENT_TOKEN_LIMITS",
+    "AGENT_MAX_TOKENS",
+    "TOKEN_LIMITS",
+
+    "RTL_ANALYZER_MAX_TOKENS",
+    "VERIFICATION_PLANNER_MAX_TOKENS",
+    "TEST_GENERATOR_MAX_TOKENS",
+    "TESTBENCH_GENERATOR_MAX_TOKENS",
+    "SIMULATOR_AGENT_MAX_TOKENS",
+    "FAILURE_ANALYZER_MAX_TOKENS",
+    "COVERAGE_AGENT_MAX_TOKENS",
+    "RED_TEAM_AGENT_MAX_TOKENS",
+    "MUTATION_AGENT_MAX_TOKENS",
+    "FORMAL_AGENT_MAX_TOKENS",
+    "BUG_LOCALIZATION_AGENT_MAX_TOKENS",
+    "RTL_REPAIR_AGENT_MAX_TOKENS",
+    "VERIFICATION_JUDGE_MAX_TOKENS",
+
+    # ------------------------------------------------------------------
+    # Agent temperatures
+    # ------------------------------------------------------------------
+
+    "AGENT_TEMPERATURES",
+
+    "RTL_ANALYZER_TEMPERATURE",
+    "VERIFICATION_PLANNER_TEMPERATURE",
+    "TEST_GENERATOR_TEMPERATURE",
+    "TESTBENCH_GENERATOR_TEMPERATURE",
+    "SIMULATOR_AGENT_TEMPERATURE",
+    "FAILURE_ANALYZER_TEMPERATURE",
+    "COVERAGE_AGENT_TEMPERATURE",
+    "RED_TEAM_AGENT_TEMPERATURE",
+    "MUTATION_AGENT_TEMPERATURE",
+    "FORMAL_AGENT_TEMPERATURE",
+    "BUG_LOCALIZATION_AGENT_TEMPERATURE",
+    "RTL_REPAIR_AGENT_TEMPERATURE",
+    "VERIFICATION_JUDGE_TEMPERATURE",
+
+    # ------------------------------------------------------------------
+    # Context limits
+    # ------------------------------------------------------------------
+
+    "MAX_RTL_CHARS",
+    "MAX_SPECIFICATION_CHARS",
+    "MAX_TESTBENCH_CHARS",
+    "MAX_SIMULATION_OUTPUT_CHARS",
+    "MAX_FAILURE_OUTPUT_CHARS",
+    "MAX_COVERAGE_OUTPUT_CHARS",
+    "MAX_AGENT_CONTEXT_CHARS",
+
+    # ------------------------------------------------------------------
+    # LLM-specific context limits
+    # ------------------------------------------------------------------
+
+    "MAX_RTL_CHARS_FOR_LLM",
+    "MAX_SPECIFICATION_CHARS_FOR_LLM",
+    "MAX_TESTBENCH_CHARS_FOR_LLM",
+    "MAX_SIMULATION_OUTPUT_CHARS_FOR_LLM",
+    "MAX_FAILURE_OUTPUT_CHARS_FOR_LLM",
+    "MAX_COVERAGE_OUTPUT_CHARS_FOR_LLM",
+    "MAX_AGENT_CONTEXT_CHARS_FOR_LLM",
+
+    # ------------------------------------------------------------------
+    # Context compatibility aliases
+    # ------------------------------------------------------------------
+
+    "RTL_CHAR_LIMIT",
+    "SPECIFICATION_CHAR_LIMIT",
+    "TESTBENCH_CHAR_LIMIT",
+    "SIMULATION_OUTPUT_CHAR_LIMIT",
+    "FAILURE_OUTPUT_CHAR_LIMIT",
+    "COVERAGE_OUTPUT_CHAR_LIMIT",
+    "AGENT_CONTEXT_CHAR_LIMIT",
+
+    # ------------------------------------------------------------------
+    # EDA
+    # ------------------------------------------------------------------
+
+    "IVERILOG_EXECUTABLE",
+    "VVP_EXECUTABLE",
+    "VERILATOR_EXECUTABLE",
+    "YOSYS_EXECUTABLE",
+
+    "IVERILOG",
+    "VVP",
+    "VERILATOR",
+    "YOSYS",
+
+    "SUPPORTED_EDA_TOOLS",
+
+    # ------------------------------------------------------------------
+    # Formal
+    # ------------------------------------------------------------------
+
+    "FORMAL_ENABLED_BY_DEFAULT",
+    "SYMBIYOSYS_EXECUTABLE",
+    "SBY_EXECUTABLE",
+    "UNSUPPORTED_OR_OPTIONAL_TOOLS",
+
+    # ------------------------------------------------------------------
+    # Timeouts
+    # ------------------------------------------------------------------
+
+    "SIMULATION_TIMEOUT_SECONDS",
+    "COMPILE_TIMEOUT_SECONDS",
+    "VERILATOR_TIMEOUT_SECONDS",
+    "YOSYS_TIMEOUT_SECONDS",
+    "FORMAL_TIMEOUT_SECONDS",
+
+    "SIM_TIMEOUT",
+    "FORMAL_TIMEOUT",
+
+    # ------------------------------------------------------------------
+    # Verification targets
+    # ------------------------------------------------------------------
+
+    "COVERAGE_TARGET",
+    "MUTATION_TARGET",
+    "VERIFICATION_TARGET",
+    "VERIFICATION_SCORE_TARGET",
+
+    "TARGET_COVERAGE",
+    "TARGET_MUTATION_SCORE",
+    "TARGET_VERIFICATION_SCORE",
+
+    "COVERAGE_THRESHOLD",
+    "MUTATION_THRESHOLD",
+    "VERIFICATION_THRESHOLD",
+
+    # ------------------------------------------------------------------
+    # Iterations
+    # ------------------------------------------------------------------
+
+    "DEFAULT_MAX_ITERATIONS",
+    "MIN_ITERATIONS",
+    "MAX_ITERATIONS",
+
+    # ------------------------------------------------------------------
+    # Feature flags
+    # ------------------------------------------------------------------
+
+    "RED_TEAM_ENABLED_BY_DEFAULT",
+    "MUTATION_ENABLED_BY_DEFAULT",
+
+    # ------------------------------------------------------------------
+    # RTL
+    # ------------------------------------------------------------------
+
+    "DEFAULT_VERILOG_STANDARD",
+    "DEFAULT_TOP_MODULE",
+
+    # ------------------------------------------------------------------
+    # Testing
+    # ------------------------------------------------------------------
+
+    "DEFAULT_CLOCK_PERIOD_NS",
+    "DEFAULT_RESET_CYCLES",
+    "DEFAULT_TEST_TIMEOUT_NS",
+
+    # ------------------------------------------------------------------
+    # Logging
+    # ------------------------------------------------------------------
+
+    "LOG_LEVEL",
+    "ENABLE_AGENT_LOGGING",
+    "ENABLE_AGENT_TRACE",
+
+    # ------------------------------------------------------------------
+    # Reporting
+    # ------------------------------------------------------------------
+
+    "DEFAULT_REPORT_FORMAT",
+    "ENABLE_HTML_REPORT",
+
+    # ------------------------------------------------------------------
+    # Security
+    # ------------------------------------------------------------------
+
+    "MAX_UPLOAD_SIZE_MB",
+    "MAX_RTL_FILE_SIZE_BYTES",
+
+    # ------------------------------------------------------------------
+    # Status
+    # ------------------------------------------------------------------
+
+    "STATUS_INITIALIZED",
+    "STATUS_RUNNING",
+    "STATUS_COMPLETED",
+    "STATUS_FAILED",
+    "STATUS_ERROR",
+    "STATUS_STOPPED",
+
+    # ------------------------------------------------------------------
+    # Verdict
+    # ------------------------------------------------------------------
+
+    "VERDICT_PASS",
+    "VERDICT_FAIL",
+    "VERDICT_NEED_MORE",
+
+    # ------------------------------------------------------------------
+    # Failure categories
+    # ------------------------------------------------------------------
+
+    "FAILURE_RTL",
+    "FAILURE_TESTBENCH",
+    "FAILURE_TEST",
+    "FAILURE_COMPILATION",
+    "FAILURE_SIMULATION",
+    "FAILURE_PROTOCOL",
+    "FAILURE_COVERAGE",
+    "FAILURE_UNKNOWN",
+
+    # ------------------------------------------------------------------
+    # Extensions
+    # ------------------------------------------------------------------
+
+    "VERILOG_EXTENSIONS",
+    "SYSTEMVERILOG_EXTENSIONS",
+    "RTL_EXTENSIONS",
+
+    # ------------------------------------------------------------------
     # Helpers
-    # ------------------------------------------------------------------------
+    # ------------------------------------------------------------------
 
     "ensure_directories",
     "get_agent_token_limit",
@@ -1337,5 +1381,4 @@ __all__ = [
     "get_available_eda_tools",
     "get_settings_summary",
 ]
-
 
