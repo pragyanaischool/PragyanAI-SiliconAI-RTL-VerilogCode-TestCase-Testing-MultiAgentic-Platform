@@ -17,7 +17,8 @@ langgraph
 langchain_chroma
 # --- LLM Providers & Inference Engines ---
 groq
-
+cocotb
+cocotb-tools
 # --- Vector Databases & Embeddings ---
 faiss-cpu
 chromadb
