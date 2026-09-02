@@ -49,7 +49,6 @@ if not groq_api_key:
 # Ensure system dependencies (Icarus Verilog) are available if running locally/Colab
 @st.cache_resource
 def setup_environment():
-    # Checks or installs iverilog if missing in standard environment
     try:
         subprocess.run(["iverilog", "-V"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
     except (FileExistsError, FileNotFoundError, subprocess.SubprocessError):
@@ -71,7 +70,7 @@ class RTLState(TypedDict):
     status: str
 
 # Initialize Groq LLM
-llm = ChatGroq(model="openai/gpt-oss-120b", temperature=0.1, api_key=groq_api_key)
+llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.1, api_key=groq_api_key)
 
 # -----------------------------------------------------------------------------
 # Agent Nodes Definition
@@ -106,6 +105,7 @@ def rtl_generator_node(state: RTLState) -> dict:
     return {"rtl_code": rtl}
 
 def testbench_generator_node(state: RTLState) -> dict:
+    # CRITICAL FIX: Explicitly return empty dict `{}` instead of implicit `None`
     if state["test_code"] and state["iteration"] > 0:
         return {}
         
@@ -261,11 +261,15 @@ if run_btn:
         with st.status("Running Multi-Agent Hardware Verification Workflow...", expanded=True) as status_box:
             st.write("🤖 Initializing LangGraph state graph...")
             
-            # Stream execution states
+            # Stream execution states safely with guarded update check
             current_state = initial_state
             for step in app.stream(initial_state):
                 node_name = list(step.keys())[0]
-                current_state.update(step[node_name])
+                node_update = step[node_name]
+                
+                if node_update:
+                    current_state.update(node_update)
+                    
                 st.write(f"-> Executed **{node_name}** (Attempt: {current_state['iteration']})")
                 if current_state.get("status") == "PASSED":
                     status_box.update(label="✅ Verification Completed Successfully!", state="complete", expanded=False)
