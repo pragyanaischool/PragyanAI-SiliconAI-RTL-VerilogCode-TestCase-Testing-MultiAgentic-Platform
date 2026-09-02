@@ -1,20 +1,18 @@
 """
 PragyanAI SiliconAI
-RTL / Verilog Verification Multi-Agent Platform
+Agentic RTL Verification Platform
 
-Central configuration for:
-- Groq / LLM
-- Agent token limits
-- Agent temperatures
-- RTL verification targets
-- EDA tool paths
-- Simulation settings
-- Formal verification settings
-- Iteration control
-- Logging / reports
-- Streamlit deployment
+Central application configuration.
 
-IMPORTANT:
+Designed for:
+- Streamlit
+- GitHub / Streamlit Cloud
+- LangChain / LangGraph
+- Groq
+- Icarus Verilog
+- Verilator
+- Yosys
+
 SymbiYosys is intentionally NOT required.
 """
 
@@ -26,9 +24,9 @@ from pathlib import Path
 from typing import Any, Dict
 
 
-# ============================================================
+# ============================================================================
 # PROJECT PATHS
-# ============================================================
+# ============================================================================
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -45,18 +43,31 @@ TESTS_DIR = BASE_DIR / "tests"
 DOCS_DIR = BASE_DIR / "docs"
 ASSETS_DIR = BASE_DIR / "assets"
 
-DATA_DIR = BASE_DIR / "data"
-RUNS_DIR = DATA_DIR / "runs"
-TEMP_DIR = DATA_DIR / "tmp"
+RUNTIME_DIR = BASE_DIR / "runtime"
+RUNS_DIR = RUNTIME_DIR / "runs"
+TEMP_DIR = RUNTIME_DIR / "tmp"
+LOG_DIR = RUNTIME_DIR / "logs"
+REPORT_DIR = RUNTIME_DIR / "reports"
 
 
-# ============================================================
-# ENVIRONMENT
-# ============================================================
+# ============================================================================
+# APPLICATION IDENTITY
+# ============================================================================
+
+APP_NAME = "PragyanAI SiliconAI"
+
+APP_VERSION = "1.0.0"
+
+PROJECT_NAME = "PragyanAI SiliconAI - Agentic RTL Verification"
+
+APP_DESCRIPTION = (
+    "Agentic RTL Verification Platform for AI Test Generation, "
+    "Simulation, Coverage, Mutation, Formal Verification and RTL Repair."
+)
 
 ENVIRONMENT = os.getenv(
     "ENVIRONMENT",
-    "production",
+    os.getenv("APP_ENV", "production"),
 )
 
 DEBUG = os.getenv(
@@ -70,30 +81,28 @@ DEBUG = os.getenv(
 }
 
 
-# ============================================================
+# ============================================================================
 # GROQ / LLM CONFIGURATION
-# ============================================================
+# ============================================================================
 
 GROQ_API_KEY = os.getenv(
     "GROQ_API_KEY",
     "",
 ).strip()
 
+# Default model requested for the platform.
 GROQ_MODEL = os.getenv(
     "GROQ_MODEL",
     "openai/gpt-oss-120b",
 ).strip()
 
-# Common compatibility aliases
+# Compatibility aliases.
 MODEL_NAME = GROQ_MODEL
 LLM_MODEL = GROQ_MODEL
 DEFAULT_MODEL = GROQ_MODEL
 
 
-# ============================================================
-# LLM GENERATION SETTINGS
-# ============================================================
-
+# Keep temperature low for RTL / verification work.
 LLM_TEMPERATURE = float(
     os.getenv(
         "LLM_TEMPERATURE",
@@ -104,6 +113,10 @@ LLM_TEMPERATURE = float(
 DEFAULT_TEMPERATURE = LLM_TEMPERATURE
 
 
+# Default generation limit.
+#
+# Individual agents use smaller limits below to avoid excessive
+# Groq token consumption.
 LLM_MAX_TOKENS = int(
     os.getenv(
         "LLM_MAX_TOKENS",
@@ -114,356 +127,267 @@ LLM_MAX_TOKENS = int(
 DEFAULT_MAX_TOKENS = LLM_MAX_TOKENS
 
 
-# ============================================================
+# ============================================================================
 # AGENT TOKEN LIMITS
-# ============================================================
+# ============================================================================
 #
-# Keep these reasonably small because Groq free-tier requests
-# can fail when prompts + generated tokens exceed TPM limits.
+# These limits are intentionally compact.
 #
+# Groq free / lower tiers can reject requests when prompts + completion
+# exceed the available TPM limit.
+#
+# Keep agent prompts compact as well.
+# ============================================================================
 
 AGENT_TOKEN_LIMITS: Dict[str, int] = {
     "rtl_analyzer": 1600,
-
     "verification_planner": 1800,
-
     "test_generator": 1800,
-
     "testbench_generator": 2200,
-
     "simulator_agent": 800,
-
     "failure_analyzer": 1600,
-
     "coverage_agent": 1600,
-
     "red_team_agent": 1800,
-
     "mutation_agent": 800,
-
     "formal_agent": 1600,
-
     "bug_localization_agent": 1400,
-
     "rtl_repair_agent": 2200,
-
     "verification_judge": 1400,
 }
 
 
-# Generic compatibility aliases
+# Compatibility aliases.
 AGENT_MAX_TOKENS = AGENT_TOKEN_LIMITS
 TOKEN_LIMITS = AGENT_TOKEN_LIMITS
 
 
-# ============================================================
-# AGENT-SPECIFIC TOKEN COMPATIBILITY
-# ============================================================
+# ============================================================================
+# INDIVIDUAL TOKEN CONSTANTS
+# ============================================================================
 #
-# Older versions of the agents import these constants directly.
-# Keep them even though the newer architecture uses the
-# AGENT_TOKEN_LIMITS dictionary.
-#
+# Older agent implementations may import these names directly.
+# Keep them available for backwards compatibility.
+# ============================================================================
 
-RTL_ANALYZER_MAX_TOKENS = AGENT_TOKEN_LIMITS.get(
-    "rtl_analyzer",
-    1600,
+RTL_ANALYZER_MAX_TOKENS = AGENT_TOKEN_LIMITS["rtl_analyzer"]
+
+VERIFICATION_PLANNER_MAX_TOKENS = (
+    AGENT_TOKEN_LIMITS["verification_planner"]
 )
 
-VERIFICATION_PLANNER_MAX_TOKENS = AGENT_TOKEN_LIMITS.get(
-    "verification_planner",
-    1800,
+TEST_GENERATOR_MAX_TOKENS = (
+    AGENT_TOKEN_LIMITS["test_generator"]
 )
 
-TEST_GENERATOR_MAX_TOKENS = AGENT_TOKEN_LIMITS.get(
-    "test_generator",
-    1800,
+TESTBENCH_GENERATOR_MAX_TOKENS = (
+    AGENT_TOKEN_LIMITS["testbench_generator"]
 )
 
-TESTBENCH_GENERATOR_MAX_TOKENS = AGENT_TOKEN_LIMITS.get(
-    "testbench_generator",
-    2200,
+SIMULATOR_AGENT_MAX_TOKENS = (
+    AGENT_TOKEN_LIMITS["simulator_agent"]
 )
 
-SIMULATOR_AGENT_MAX_TOKENS = AGENT_TOKEN_LIMITS.get(
-    "simulator_agent",
-    800,
+FAILURE_ANALYZER_MAX_TOKENS = (
+    AGENT_TOKEN_LIMITS["failure_analyzer"]
 )
 
-FAILURE_ANALYZER_MAX_TOKENS = AGENT_TOKEN_LIMITS.get(
-    "failure_analyzer",
-    1600,
+COVERAGE_AGENT_MAX_TOKENS = (
+    AGENT_TOKEN_LIMITS["coverage_agent"]
 )
 
-COVERAGE_AGENT_MAX_TOKENS = AGENT_TOKEN_LIMITS.get(
-    "coverage_agent",
-    1600,
+RED_TEAM_AGENT_MAX_TOKENS = (
+    AGENT_TOKEN_LIMITS["red_team_agent"]
 )
 
-RED_TEAM_AGENT_MAX_TOKENS = AGENT_TOKEN_LIMITS.get(
-    "red_team_agent",
-    1800,
+MUTATION_AGENT_MAX_TOKENS = (
+    AGENT_TOKEN_LIMITS["mutation_agent"]
 )
 
-MUTATION_AGENT_MAX_TOKENS = AGENT_TOKEN_LIMITS.get(
-    "mutation_agent",
-    800,
+FORMAL_AGENT_MAX_TOKENS = (
+    AGENT_TOKEN_LIMITS["formal_agent"]
 )
 
-FORMAL_AGENT_MAX_TOKENS = AGENT_TOKEN_LIMITS.get(
-    "formal_agent",
-    1600,
+BUG_LOCALIZATION_AGENT_MAX_TOKENS = (
+    AGENT_TOKEN_LIMITS["bug_localization_agent"]
 )
 
-BUG_LOCALIZATION_AGENT_MAX_TOKENS = AGENT_TOKEN_LIMITS.get(
-    "bug_localization_agent",
-    1400,
+RTL_REPAIR_AGENT_MAX_TOKENS = (
+    AGENT_TOKEN_LIMITS["rtl_repair_agent"]
 )
 
-RTL_REPAIR_AGENT_MAX_TOKENS = AGENT_TOKEN_LIMITS.get(
-    "rtl_repair_agent",
-    2200,
-)
-
-VERIFICATION_JUDGE_MAX_TOKENS = AGENT_TOKEN_LIMITS.get(
-    "verification_judge",
-    1400,
+VERIFICATION_JUDGE_MAX_TOKENS = (
+    AGENT_TOKEN_LIMITS["verification_judge"]
 )
 
 
-# ============================================================
-# TOKEN LIMIT ALIASES
-# ============================================================
-
-RTL_ANALYZER_TOKEN_LIMIT = RTL_ANALYZER_MAX_TOKENS
-VERIFICATION_PLANNER_TOKEN_LIMIT = VERIFICATION_PLANNER_MAX_TOKENS
-TEST_GENERATOR_TOKEN_LIMIT = TEST_GENERATOR_MAX_TOKENS
-TESTBENCH_GENERATOR_TOKEN_LIMIT = TESTBENCH_GENERATOR_MAX_TOKENS
-SIMULATOR_AGENT_TOKEN_LIMIT = SIMULATOR_AGENT_MAX_TOKENS
-FAILURE_ANALYZER_TOKEN_LIMIT = FAILURE_ANALYZER_MAX_TOKENS
-COVERAGE_AGENT_TOKEN_LIMIT = COVERAGE_AGENT_MAX_TOKENS
-RED_TEAM_AGENT_TOKEN_LIMIT = RED_TEAM_AGENT_MAX_TOKENS
-MUTATION_AGENT_TOKEN_LIMIT = MUTATION_AGENT_MAX_TOKENS
-FORMAL_AGENT_TOKEN_LIMIT = FORMAL_AGENT_MAX_TOKENS
-BUG_LOCALIZATION_AGENT_TOKEN_LIMIT = BUG_LOCALIZATION_AGENT_MAX_TOKENS
-RTL_REPAIR_AGENT_TOKEN_LIMIT = RTL_REPAIR_AGENT_MAX_TOKENS
-VERIFICATION_JUDGE_TOKEN_LIMIT = VERIFICATION_JUDGE_MAX_TOKENS
-
-
-# ============================================================
+# ============================================================================
 # AGENT TEMPERATURES
-# ============================================================
+# ============================================================================
 
 AGENT_TEMPERATURES: Dict[str, float] = {
-
-    "rtl_analyzer": 0.05,
-
-    "verification_planner": 0.10,
-
-    "test_generator": 0.15,
-
-    "testbench_generator": 0.10,
-
-    "simulator_agent": 0.00,
-
-    "failure_analyzer": 0.05,
-
-    "coverage_agent": 0.05,
-
-    "red_team_agent": 0.20,
-
-    "mutation_agent": 0.00,
-
-    "formal_agent": 0.05,
-
-    "bug_localization_agent": 0.05,
-
-    "rtl_repair_agent": 0.10,
-
-    "verification_judge": 0.00,
+    "rtl_analyzer": 0.1,
+    "verification_planner": 0.1,
+    "test_generator": 0.2,
+    "testbench_generator": 0.1,
+    "simulator_agent": 0.0,
+    "failure_analyzer": 0.1,
+    "coverage_agent": 0.1,
+    "red_team_agent": 0.2,
+    "mutation_agent": 0.0,
+    "formal_agent": 0.0,
+    "bug_localization_agent": 0.1,
+    "rtl_repair_agent": 0.1,
+    "verification_judge": 0.0,
 }
 
 
-# ============================================================
-# AGENT TEMPERATURE COMPATIBILITY
-# ============================================================
+# Individual compatibility constants.
 
-RTL_ANALYZER_TEMPERATURE = AGENT_TEMPERATURES.get(
-    "rtl_analyzer",
-    LLM_TEMPERATURE,
+RTL_ANALYZER_TEMPERATURE = AGENT_TEMPERATURES["rtl_analyzer"]
+
+VERIFICATION_PLANNER_TEMPERATURE = (
+    AGENT_TEMPERATURES["verification_planner"]
 )
 
-VERIFICATION_PLANNER_TEMPERATURE = AGENT_TEMPERATURES.get(
-    "verification_planner",
-    LLM_TEMPERATURE,
+TEST_GENERATOR_TEMPERATURE = (
+    AGENT_TEMPERATURES["test_generator"]
 )
 
-TEST_GENERATOR_TEMPERATURE = AGENT_TEMPERATURES.get(
-    "test_generator",
-    LLM_TEMPERATURE,
+TESTBENCH_GENERATOR_TEMPERATURE = (
+    AGENT_TEMPERATURES["testbench_generator"]
 )
 
-TESTBENCH_GENERATOR_TEMPERATURE = AGENT_TEMPERATURES.get(
-    "testbench_generator",
-    LLM_TEMPERATURE,
+SIMULATOR_AGENT_TEMPERATURE = (
+    AGENT_TEMPERATURES["simulator_agent"]
 )
 
-SIMULATOR_AGENT_TEMPERATURE = AGENT_TEMPERATURES.get(
-    "simulator_agent",
-    0.0,
+FAILURE_ANALYZER_TEMPERATURE = (
+    AGENT_TEMPERATURES["failure_analyzer"]
 )
 
-FAILURE_ANALYZER_TEMPERATURE = AGENT_TEMPERATURES.get(
-    "failure_analyzer",
-    LLM_TEMPERATURE,
+COVERAGE_AGENT_TEMPERATURE = (
+    AGENT_TEMPERATURES["coverage_agent"]
 )
 
-COVERAGE_AGENT_TEMPERATURE = AGENT_TEMPERATURES.get(
-    "coverage_agent",
-    LLM_TEMPERATURE,
+RED_TEAM_AGENT_TEMPERATURE = (
+    AGENT_TEMPERATURES["red_team_agent"]
 )
 
-RED_TEAM_AGENT_TEMPERATURE = AGENT_TEMPERATURES.get(
-    "red_team_agent",
-    LLM_TEMPERATURE,
+MUTATION_AGENT_TEMPERATURE = (
+    AGENT_TEMPERATURES["mutation_agent"]
 )
 
-MUTATION_AGENT_TEMPERATURE = AGENT_TEMPERATURES.get(
-    "mutation_agent",
-    0.0,
+FORMAL_AGENT_TEMPERATURE = (
+    AGENT_TEMPERATURES["formal_agent"]
 )
 
-FORMAL_AGENT_TEMPERATURE = AGENT_TEMPERATURES.get(
-    "formal_agent",
-    LLM_TEMPERATURE,
+BUG_LOCALIZATION_AGENT_TEMPERATURE = (
+    AGENT_TEMPERATURES["bug_localization_agent"]
 )
 
-BUG_LOCALIZATION_AGENT_TEMPERATURE = AGENT_TEMPERATURES.get(
-    "bug_localization_agent",
-    LLM_TEMPERATURE,
+RTL_REPAIR_AGENT_TEMPERATURE = (
+    AGENT_TEMPERATURES["rtl_repair_agent"]
 )
 
-RTL_REPAIR_AGENT_TEMPERATURE = AGENT_TEMPERATURES.get(
-    "rtl_repair_agent",
-    LLM_TEMPERATURE,
-)
-
-VERIFICATION_JUDGE_TEMPERATURE = AGENT_TEMPERATURES.get(
-    "verification_judge",
-    0.0,
+VERIFICATION_JUDGE_TEMPERATURE = (
+    AGENT_TEMPERATURES["verification_judge"]
 )
 
 
-# ============================================================
-# PROMPT SIZE LIMITS
-# ============================================================
+# ============================================================================
+# PROMPT / CONTEXT LIMITS
+# ============================================================================
+
+# These are character limits, not token limits.
 #
-# These limits help avoid oversized Groq requests.
-#
+# They help prevent a large RTL file or simulation log from being sent
+# repeatedly to Groq.
 
 MAX_RTL_CHARS = int(
     os.getenv(
         "MAX_RTL_CHARS",
-        "14000",
+        "12000",
+    )
+)
+
+MAX_SPECIFICATION_CHARS = int(
+    os.getenv(
+        "MAX_SPECIFICATION_CHARS",
+        "8000",
     )
 )
 
 MAX_TESTBENCH_CHARS = int(
     os.getenv(
         "MAX_TESTBENCH_CHARS",
-        "14000",
+        "12000",
     )
 )
 
-MAX_ANALYSIS_CHARS = int(
+MAX_SIMULATION_OUTPUT_CHARS = int(
     os.getenv(
-        "MAX_ANALYSIS_CHARS",
-        "9000",
+        "MAX_SIMULATION_OUTPUT_CHARS",
+        "8000",
     )
 )
 
 MAX_FAILURE_OUTPUT_CHARS = int(
     os.getenv(
         "MAX_FAILURE_OUTPUT_CHARS",
-        "7000",
+        "6000",
     )
 )
 
-MAX_COVERAGE_CHARS = int(
+MAX_COVERAGE_OUTPUT_CHARS = int(
     os.getenv(
-        "MAX_COVERAGE_CHARS",
-        "7000",
+        "MAX_COVERAGE_OUTPUT_CHARS",
+        "6000",
     )
 )
 
-MAX_TRACE_CHARS = int(
+MAX_AGENT_CONTEXT_CHARS = int(
     os.getenv(
-        "MAX_TRACE_CHARS",
-        "12000",
+        "MAX_AGENT_CONTEXT_CHARS",
+        "18000",
     )
 )
 
 
-# Compatibility aliases
+# Compatibility aliases.
 
-PROMPT_RTL_CHAR_LIMIT = MAX_RTL_CHARS
-PROMPT_TESTBENCH_CHAR_LIMIT = MAX_TESTBENCH_CHARS
-PROMPT_ANALYSIS_CHAR_LIMIT = MAX_ANALYSIS_CHARS
-PROMPT_OUTPUT_CHAR_LIMIT = MAX_FAILURE_OUTPUT_CHARS
+RTL_CHAR_LIMIT = MAX_RTL_CHARS
+SPECIFICATION_CHAR_LIMIT = MAX_SPECIFICATION_CHARS
+TESTBENCH_CHAR_LIMIT = MAX_TESTBENCH_CHARS
+SIMULATION_OUTPUT_CHAR_LIMIT = MAX_SIMULATION_OUTPUT_CHARS
+AGENT_CONTEXT_CHAR_LIMIT = MAX_AGENT_CONTEXT_CHARS
 
 
-# ============================================================
-# EDA EXECUTABLES
-# ============================================================
+# ============================================================================
+# EDA TOOL CONFIGURATION
+# ============================================================================
 
 IVERILOG_EXECUTABLE = os.getenv(
     "IVERILOG_EXECUTABLE",
-    "",
-).strip()
+    "iverilog",
+)
 
 VVP_EXECUTABLE = os.getenv(
     "VVP_EXECUTABLE",
-    "",
-).strip()
+    "vvp",
+)
 
 VERILATOR_EXECUTABLE = os.getenv(
     "VERILATOR_EXECUTABLE",
-    "",
-).strip()
+    "verilator",
+)
 
 YOSYS_EXECUTABLE = os.getenv(
     "YOSYS_EXECUTABLE",
-    "",
-).strip()
+    "yosys",
+)
 
 
-# ------------------------------------------------------------
-# Automatically discover binaries when environment variables
-# are not explicitly configured.
-# ------------------------------------------------------------
-
-if not IVERILOG_EXECUTABLE:
-    IVERILOG_EXECUTABLE = shutil.which(
-        "iverilog"
-    ) or "iverilog"
-
-if not VVP_EXECUTABLE:
-    VVP_EXECUTABLE = shutil.which(
-        "vvp"
-    ) or "vvp"
-
-if not VERILATOR_EXECUTABLE:
-    VERILATOR_EXECUTABLE = shutil.which(
-        "verilator"
-    ) or "verilator"
-
-if not YOSYS_EXECUTABLE:
-    YOSYS_EXECUTABLE = shutil.which(
-        "yosys"
-    ) or "yosys"
-
-
-# Compatibility aliases
+# Compatibility aliases.
 
 IVERILOG = IVERILOG_EXECUTABLE
 VVP = VVP_EXECUTABLE
@@ -471,41 +395,47 @@ VERILATOR = VERILATOR_EXECUTABLE
 YOSYS = YOSYS_EXECUTABLE
 
 
-# ============================================================
-# EDA TOOL AVAILABILITY
-# ============================================================
-
 SUPPORTED_EDA_TOOLS = {
-    "iverilog": IVERILOG_EXECUTABLE,
-    "vvp": VVP_EXECUTABLE,
-    "verilator": VERILATOR_EXECUTABLE,
-    "yosys": YOSYS_EXECUTABLE,
+    "iverilog",
+    "vvp",
+    "verilator",
+    "yosys",
 }
 
 
-# ============================================================
-# SYMBIYOSYS
-# ============================================================
+# ============================================================================
+# FORMAL VERIFICATION
+# ============================================================================
 #
-# INTENTIONALLY DISABLED.
+# IMPORTANT:
 #
-# PragyanAI SiliconAI does not require SymbiYosys.
+# SymbiYosys has intentionally been removed from the platform dependency
+# requirements.
 #
-# Formal verification must gracefully degrade if a suitable
-# formal backend is unavailable.
+# Formal verification remains an optional workflow stage.
 #
+# The FormalAgent / FormalRunner should gracefully report "unavailable"
+# if no supported formal backend is installed.
+# ============================================================================
 
-FORMAL_ENABLED_BY_DEFAULT = False
+FORMAL_ENABLED_BY_DEFAULT = (
+    os.getenv(
+        "FORMAL_ENABLED_BY_DEFAULT",
+        "false",
+    ).lower()
+    in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+)
 
-ENABLE_FORMAL = os.getenv(
-    "ENABLE_FORMAL",
-    "false",
-).lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
+
+# Explicitly retained as None for backwards compatibility with modules
+# that may check these names.
+SYMBIYOSYS_EXECUTABLE = None
+SBY_EXECUTABLE = None
 
 
 UNSUPPORTED_OR_OPTIONAL_TOOLS = {
@@ -513,101 +443,82 @@ UNSUPPORTED_OR_OPTIONAL_TOOLS = {
 }
 
 
-# Explicit compatibility values.
-# These do NOT invoke or require SymbiYosys.
+# ============================================================================
+# TIMEOUTS
+# ============================================================================
 
-SYMBIYOSYS_EXECUTABLE = None
-SBY_EXECUTABLE = None
-
-
-# ============================================================
-# SIMULATION
-# ============================================================
-
-SIMULATION_TIMEOUT = int(
+SIMULATION_TIMEOUT_SECONDS = int(
     os.getenv(
-        "SIMULATION_TIMEOUT",
+        "SIMULATION_TIMEOUT_SECONDS",
         "30",
     )
 )
 
-COMPILE_TIMEOUT = int(
+COMPILE_TIMEOUT_SECONDS = int(
     os.getenv(
-        "COMPILE_TIMEOUT",
+        "COMPILE_TIMEOUT_SECONDS",
         "30",
     )
 )
 
-VERILATOR_TIMEOUT = int(
+VERILATOR_TIMEOUT_SECONDS = int(
     os.getenv(
-        "VERILATOR_TIMEOUT",
-        "30",
+        "VERILATOR_TIMEOUT_SECONDS",
+        "60",
     )
 )
 
-YOSYS_TIMEOUT = int(
+YOSYS_TIMEOUT_SECONDS = int(
     os.getenv(
-        "YOSYS_TIMEOUT",
-        "30",
+        "YOSYS_TIMEOUT_SECONDS",
+        "60",
     )
 )
 
-
-# ============================================================
-# FORMAL VERIFICATION
-# ============================================================
-
-FORMAL_TIMEOUT = int(
+FORMAL_TIMEOUT_SECONDS = int(
     os.getenv(
-        "FORMAL_TIMEOUT",
-        "30",
-    )
-)
-
-FORMAL_MAX_DEPTH = int(
-    os.getenv(
-        "FORMAL_MAX_DEPTH",
-        "20",
+        "FORMAL_TIMEOUT_SECONDS",
+        "60",
     )
 )
 
 
-# ============================================================
+# ============================================================================
 # VERIFICATION TARGETS
-# ============================================================
+# ============================================================================
 
-TARGET_COVERAGE = float(
+COVERAGE_TARGET = float(
     os.getenv(
-        "TARGET_COVERAGE",
+        "COVERAGE_TARGET",
         "95",
     )
 )
 
-TARGET_MUTATION_SCORE = float(
+MUTATION_TARGET = float(
     os.getenv(
-        "TARGET_MUTATION_SCORE",
+        "MUTATION_TARGET",
         "90",
     )
 )
 
-TARGET_VERIFICATION_SCORE = float(
+VERIFICATION_SCORE_TARGET = float(
     os.getenv(
-        "TARGET_VERIFICATION_SCORE",
+        "VERIFICATION_SCORE_TARGET",
         "90",
     )
 )
 
 
-# Compatibility aliases
+# Compatibility aliases.
 
-COVERAGE_TARGET = TARGET_COVERAGE
-MUTATION_TARGET = TARGET_MUTATION_SCORE
-VERIFICATION_TARGET = TARGET_VERIFICATION_SCORE
+TARGET_COVERAGE = COVERAGE_TARGET
+TARGET_MUTATION_SCORE = MUTATION_TARGET
+TARGET_VERIFICATION_SCORE = VERIFICATION_SCORE_TARGET
 
 
-# ============================================================
+# ============================================================================
 # ITERATION CONTROL
-# ============================================================
+# ============================================================================
 
 DEFAULT_MAX_ITERATIONS = int(
     os.getenv(
@@ -631,142 +542,45 @@ MAX_ITERATIONS = int(
 )
 
 
-# Compatibility aliases
-
-MAX_VERIFICATION_ITERATIONS = MAX_ITERATIONS
-DEFAULT_ITERATIONS = DEFAULT_MAX_ITERATIONS
-
-
-# ============================================================
+# ============================================================================
 # FEATURE FLAGS
-# ============================================================
+# ============================================================================
 
-ENABLE_RED_TEAM = os.getenv(
-    "ENABLE_RED_TEAM",
-    "true",
-).lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
-
-
-ENABLE_MUTATION = os.getenv(
-    "ENABLE_MUTATION",
-    "true",
-).lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
-
-
-# Formal remains opt-in.
-ENABLE_FORMAL = ENABLE_FORMAL
-
-
-# ============================================================
-# LOGGING
-# ============================================================
-
-LOG_LEVEL = os.getenv(
-    "LOG_LEVEL",
-    "INFO",
-).upper()
-
-ENABLE_AGENT_LOGGING = os.getenv(
-    "ENABLE_AGENT_LOGGING",
-    "true",
-).lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
-
-ENABLE_TRACE_LOGGING = os.getenv(
-    "ENABLE_TRACE_LOGGING",
-    "true",
-).lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
-
-MAX_LOG_ENTRIES = int(
+RED_TEAM_ENABLED_BY_DEFAULT = (
     os.getenv(
-        "MAX_LOG_ENTRIES",
-        "500",
-    )
+        "RED_TEAM_ENABLED_BY_DEFAULT",
+        "true",
+    ).lower()
+    in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+)
+
+MUTATION_ENABLED_BY_DEFAULT = (
+    os.getenv(
+        "MUTATION_ENABLED_BY_DEFAULT",
+        "false",
+    ).lower()
+    in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 )
 
 
-# ============================================================
-# REPORTING
-# ============================================================
-
-ENABLE_REPORTS = os.getenv(
-    "ENABLE_REPORTS",
-    "true",
-).lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
-
-
-REPORT_FORMAT = os.getenv(
-    "REPORT_FORMAT",
-    "markdown",
-).lower()
-
-
-# ============================================================
-# SECURITY / EXECUTION
-# ============================================================
-
-ALLOW_EXTERNAL_COMMANDS = os.getenv(
-    "ALLOW_EXTERNAL_COMMANDS",
-    "true",
-).lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
-
-
-MAX_RTL_FILE_SIZE_BYTES = int(
-    os.getenv(
-        "MAX_RTL_FILE_SIZE_BYTES",
-        str(1024 * 1024),
-    )
-)
-
-
-MAX_TESTBENCH_FILE_SIZE_BYTES = int(
-    os.getenv(
-        "MAX_TESTBENCH_FILE_SIZE_BYTES",
-        str(1024 * 1024),
-    )
-)
-
-
-# ============================================================
-# DEFAULT RTL SETTINGS
-# ============================================================
+# ============================================================================
+# RTL DEFAULTS
+# ============================================================================
 
 DEFAULT_VERILOG_STANDARD = os.getenv(
     "DEFAULT_VERILOG_STANDARD",
     "2012",
 )
-
-IVERILOG_STANDARD = DEFAULT_VERILOG_STANDARD
-
 
 DEFAULT_TOP_MODULE = os.getenv(
     "DEFAULT_TOP_MODULE",
@@ -774,369 +588,425 @@ DEFAULT_TOP_MODULE = os.getenv(
 )
 
 
-# ============================================================
-# SIMULATION OUTPUT MARKERS
-# ============================================================
+# ============================================================================
+# TESTING DEFAULTS
+# ============================================================================
 
-TEST_PASS_MARKER = os.getenv(
-    "TEST_PASS_MARKER",
-    "TEST_RESULT: PASS",
+DEFAULT_CLOCK_PERIOD_NS = int(
+    os.getenv(
+        "DEFAULT_CLOCK_PERIOD_NS",
+        "10",
+    )
 )
 
-TEST_FAIL_MARKER = os.getenv(
-    "TEST_FAIL_MARKER",
-    "TEST_RESULT: FAIL",
+DEFAULT_RESET_CYCLES = int(
+    os.getenv(
+        "DEFAULT_RESET_CYCLES",
+        "2",
+    )
 )
 
-TEST_ERROR_MARKER = os.getenv(
-    "TEST_ERROR_MARKER",
-    "TEST_ERROR",
+DEFAULT_TEST_TIMEOUT_NS = int(
+    os.getenv(
+        "DEFAULT_TEST_TIMEOUT_NS",
+        "1000",
+    )
 )
 
 
-# ============================================================
-# WORKFLOW STATUS VALUES
-# ============================================================
+# ============================================================================
+# LOGGING
+# ============================================================================
 
-STATUS_IDLE = "idle"
+LOG_LEVEL = os.getenv(
+    "LOG_LEVEL",
+    "INFO",
+).upper()
+
+ENABLE_AGENT_LOGGING = (
+    os.getenv(
+        "ENABLE_AGENT_LOGGING",
+        "true",
+    ).lower()
+    in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+)
+
+ENABLE_AGENT_TRACE = (
+    os.getenv(
+        "ENABLE_AGENT_TRACE",
+        "true",
+    ).lower()
+    in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+)
+
+
+# ============================================================================
+# REPORTING
+# ============================================================================
+
+DEFAULT_REPORT_FORMAT = os.getenv(
+    "DEFAULT_REPORT_FORMAT",
+    "markdown",
+)
+
+ENABLE_HTML_REPORT = (
+    os.getenv(
+        "ENABLE_HTML_REPORT",
+        "true",
+    ).lower()
+    in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+)
+
+
+# ============================================================================
+# SECURITY / RESOURCE LIMITS
+# ============================================================================
+
+MAX_UPLOAD_SIZE_MB = int(
+    os.getenv(
+        "MAX_UPLOAD_SIZE_MB",
+        "5",
+    )
+)
+
+MAX_RTL_FILE_SIZE_BYTES = (
+    MAX_UPLOAD_SIZE_MB * 1024 * 1024
+)
+
+
+# ============================================================================
+# WORKFLOW STATUS
+# ============================================================================
+
+STATUS_INITIALIZED = "initialized"
 STATUS_RUNNING = "running"
-STATUS_PASSED = "passed"
+STATUS_COMPLETED = "completed"
 STATUS_FAILED = "failed"
 STATUS_ERROR = "error"
-STATUS_COMPLETED = "completed"
-STATUS_NEEDS_REVIEW = "needs_review"
+STATUS_STOPPED = "stopped"
 
 
-# ============================================================
-# JUDGE VERDICTS
-# ============================================================
+# ============================================================================
+# VERDICT CONSTANTS
+# ============================================================================
 
 VERDICT_PASS = "PASS"
 VERDICT_FAIL = "FAIL"
 VERDICT_NEED_MORE = "NEED_MORE"
 
 
-# ============================================================
-# DIRECTORY CREATION
-# ============================================================
+# ============================================================================
+# FAILURE CATEGORIES
+# ============================================================================
+
+FAILURE_RTL = "rtl"
+FAILURE_TESTBENCH = "testbench"
+FAILURE_TEST = "test"
+FAILURE_COMPILATION = "compilation"
+FAILURE_SIMULATION = "simulation"
+FAILURE_PROTOCOL = "protocol"
+FAILURE_COVERAGE = "coverage"
+FAILURE_UNKNOWN = "unknown"
+
+
+# ============================================================================
+# FILE EXTENSIONS
+# ============================================================================
+
+VERILOG_EXTENSIONS = {
+    ".v",
+    ".vh",
+}
+
+SYSTEMVERILOG_EXTENSIONS = {
+    ".sv",
+    ".svh",
+}
+
+RTL_EXTENSIONS = (
+    VERILOG_EXTENSIONS
+    | SYSTEMVERILOG_EXTENSIONS
+)
+
+
+# ============================================================================
+# DIRECTORY INITIALIZATION
+# ============================================================================
 
 def ensure_directories() -> None:
     """
-    Create runtime directories required by the application.
+    Create runtime directories used by the application.
 
-    Safe to call multiple times.
+    This function is intentionally safe for Streamlit Cloud.
     """
 
     directories = [
-        DATA_DIR,
+        RUNTIME_DIR,
         RUNS_DIR,
         TEMP_DIR,
-        REPORTS_DIR,
+        LOG_DIR,
+        REPORT_DIR,
     ]
 
     for directory in directories:
-        directory.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
+        try:
+            directory.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+        except Exception:
+            # Do not make application import fail because a runtime
+            # directory cannot be created.
+            pass
 
 
-# ============================================================
+# ============================================================================
 # AGENT CONFIG HELPERS
-# ============================================================
+# ============================================================================
 
 def get_agent_token_limit(
     agent_name: str,
-    default: int | None = None,
 ) -> int:
     """
-    Return token limit for an agent.
-
-    Supports names with or without '_agent' suffix.
+    Return the configured max output tokens for an agent.
     """
 
-    name = str(
+    key = str(
         agent_name
     ).strip().lower()
 
-    if name in AGENT_TOKEN_LIMITS:
-        return AGENT_TOKEN_LIMITS[name]
-
-    normalized = name.replace(
-        "-",
-        "_",
-    )
-
-    if normalized in AGENT_TOKEN_LIMITS:
-        return AGENT_TOKEN_LIMITS[
-            normalized
-        ]
-
-    if normalized.endswith(
-        "_agent"
-    ):
-        shortened = normalized[
-            :-len("_agent")
-        ]
-
-        if shortened in AGENT_TOKEN_LIMITS:
-            return AGENT_TOKEN_LIMITS[
-                shortened
-            ]
-
-    if default is not None:
-        return int(default)
-
     return int(
-        DEFAULT_MAX_TOKENS
+        AGENT_TOKEN_LIMITS.get(
+            key,
+            DEFAULT_MAX_TOKENS,
+        )
     )
 
 
 def get_agent_temperature(
     agent_name: str,
-    default: float | None = None,
 ) -> float:
     """
-    Return temperature for an agent.
+    Return the configured temperature for an agent.
     """
 
-    name = str(
+    key = str(
         agent_name
     ).strip().lower()
 
-    if name in AGENT_TEMPERATURES:
-        return AGENT_TEMPERATURES[name]
-
-    normalized = name.replace(
-        "-",
-        "_",
-    )
-
-    if normalized in AGENT_TEMPERATURES:
-        return AGENT_TEMPERATURES[
-            normalized
-        ]
-
-    if normalized.endswith(
-        "_agent"
-    ):
-        shortened = normalized[
-            :-len("_agent")
-        ]
-
-        if shortened in AGENT_TEMPERATURES:
-            return AGENT_TEMPERATURES[
-                shortened
-            ]
-
-    if default is not None:
-        return float(default)
-
     return float(
-        LLM_TEMPERATURE
+        AGENT_TEMPERATURES.get(
+            key,
+            DEFAULT_TEMPERATURE,
+        )
     )
 
 
-# ============================================================
-# TOOL HELPERS
-# ============================================================
+# ============================================================================
+# EDA HELPERS
+# ============================================================================
 
 def tool_available(
-    tool_name: str,
+    executable: str,
 ) -> bool:
     """
-    Check whether an EDA executable is available.
+    Return True when an executable is available on PATH.
     """
-
-    name = str(
-        tool_name
-    ).strip().lower()
-
-    if name == "symbiyosys":
-        return False
-
-    executable = SUPPORTED_EDA_TOOLS.get(
-        name
-    )
 
     if not executable:
         return False
 
-    return (
-        shutil.which(executable)
-        is not None
-        or Path(executable).exists()
-    )
+    try:
+        return shutil.which(
+            executable
+        ) is not None
+    except Exception:
+        return False
 
 
 def get_available_eda_tools() -> Dict[str, bool]:
     """
     Return availability of supported EDA tools.
+
+    SymbiYosys is intentionally excluded.
     """
 
     return {
-        name: tool_available(name)
-        for name in SUPPORTED_EDA_TOOLS
+        "iverilog": tool_available(
+            IVERILOG_EXECUTABLE
+        ),
+        "vvp": tool_available(
+            VVP_EXECUTABLE
+        ),
+        "verilator": tool_available(
+            VERILATOR_EXECUTABLE
+        ),
+        "yosys": tool_available(
+            YOSYS_EXECUTABLE
+        ),
     }
 
 
-# ============================================================
+# ============================================================================
 # SETTINGS SUMMARY
-# ============================================================
+# ============================================================================
 
 def get_settings_summary() -> Dict[str, Any]:
     """
-    Return a safe configuration summary.
+    Return a safe settings summary.
 
-    Secrets such as GROQ_API_KEY are never returned.
+    API keys are NEVER returned.
     """
 
     return {
+        "app_name": APP_NAME,
+        "app_version": APP_VERSION,
+        "project_name": PROJECT_NAME,
         "environment": ENVIRONMENT,
-
         "debug": DEBUG,
 
         "model": GROQ_MODEL,
-
-        "groq_configured": bool(
-            GROQ_API_KEY
-        ),
-
-        "llm_temperature": LLM_TEMPERATURE,
-
-        "llm_max_tokens": LLM_MAX_TOKENS,
+        "temperature": LLM_TEMPERATURE,
+        "max_tokens": LLM_MAX_TOKENS,
 
         "agent_token_limits": dict(
             AGENT_TOKEN_LIMITS
         ),
 
-        "coverage_target": TARGET_COVERAGE,
+        "coverage_target": COVERAGE_TARGET,
+        "mutation_target": MUTATION_TARGET,
+        "verification_score_target": (
+            VERIFICATION_SCORE_TARGET
+        ),
 
-        "mutation_target": TARGET_MUTATION_SCORE,
+        "default_max_iterations": (
+            DEFAULT_MAX_ITERATIONS
+        ),
+        "min_iterations": MIN_ITERATIONS,
+        "max_iterations": MAX_ITERATIONS,
 
-        "verification_target": TARGET_VERIFICATION_SCORE,
+        "red_team_enabled": (
+            RED_TEAM_ENABLED_BY_DEFAULT
+        ),
+        "mutation_enabled": (
+            MUTATION_ENABLED_BY_DEFAULT
+        ),
+        "formal_enabled": (
+            FORMAL_ENABLED_BY_DEFAULT
+        ),
 
-        "default_max_iterations":
-            DEFAULT_MAX_ITERATIONS,
+        "default_verilog_standard": (
+            DEFAULT_VERILOG_STANDARD
+        ),
+        "default_top_module": DEFAULT_TOP_MODULE,
 
-        "max_iterations":
-            MAX_ITERATIONS,
+        "simulation_timeout": (
+            SIMULATION_TIMEOUT_SECONDS
+        ),
+        "formal_timeout": (
+            FORMAL_TIMEOUT_SECONDS
+        ),
 
-        "red_team_enabled":
-            ENABLE_RED_TEAM,
+        "eda_tools": get_available_eda_tools(),
 
-        "mutation_enabled":
-            ENABLE_MUTATION,
-
-        "formal_enabled":
-            ENABLE_FORMAL,
-
-        "formal_default":
-            FORMAL_ENABLED_BY_DEFAULT,
-
-        "eda_tools":
-            get_available_eda_tools(),
-
-        "symbiyosys":
-            False,
+        "symbiyosys_enabled": False,
+        "symbiyosys_required": False,
     }
 
 
-# ============================================================
-# INITIALIZE DIRECTORIES
-# ============================================================
+# ============================================================================
+# COMPATIBILITY ALIASES
+# ============================================================================
+#
+# These aliases help older modules continue to work while the platform
+# evolves.
+# ============================================================================
 
-try:
-    ensure_directories()
-except Exception:
-    # Streamlit Cloud / restricted environments may prevent
-    # directory creation during import. Runtime code can call
-    # ensure_directories() again.
-    pass
+APP_ENV = ENVIRONMENT
 
+VERSION = APP_VERSION
 
-# ============================================================
-# DEBUG INFORMATION
-# ============================================================
+GROQ_MODEL_NAME = GROQ_MODEL
 
-if DEBUG:
-    print(
-        "PragyanAI SiliconAI settings loaded."
-    )
+MAX_TOKENS = LLM_MAX_TOKENS
 
-    print(
-        f"Environment : {ENVIRONMENT}"
-    )
+TEMPERATURE = LLM_TEMPERATURE
 
-    print(
-        f"Model       : {GROQ_MODEL}"
-    )
+SIM_TIMEOUT = SIMULATION_TIMEOUT_SECONDS
 
-    print(
-        f"Max Tokens  : {LLM_MAX_TOKENS}"
-    )
+FORMAL_TIMEOUT = FORMAL_TIMEOUT_SECONDS
 
-    print(
-        f"Coverage    : {TARGET_COVERAGE}%"
-    )
+COVERAGE_THRESHOLD = COVERAGE_TARGET
 
-    print(
-        f"Mutation    : {TARGET_MUTATION_SCORE}%"
-    )
+MUTATION_THRESHOLD = MUTATION_TARGET
 
-    print(
-        f"Verification: {TARGET_VERIFICATION_SCORE}%"
-    )
-
-    print(
-        f"Formal      : {ENABLE_FORMAL}"
-    )
-
-    print(
-        "SymbiYosys  : DISABLED"
-    )
+VERIFICATION_THRESHOLD = VERIFICATION_SCORE_TARGET
 
 
-# ============================================================
+# ============================================================================
+# INITIALIZE SAFE RUNTIME DIRECTORIES
+# ============================================================================
+
+ensure_directories()
+
+
+# ============================================================================
 # PUBLIC EXPORTS
-# ============================================================
+# ============================================================================
 
 __all__ = [
 
-    # Paths
-    "BASE_DIR",
-    "CONFIG_DIR",
-    "AGENTS_DIR",
-    "GRAPH_DIR",
-    "EDA_DIR",
-    "VERIFICATION_DIR",
-    "LOGGING_DIR",
-    "REPORTS_DIR",
-    "PROMPTS_DIR",
-    "EXAMPLES_DIR",
-    "TESTS_DIR",
-    "DOCS_DIR",
-    "ASSETS_DIR",
-    "DATA_DIR",
-    "RUNS_DIR",
-    "TEMP_DIR",
+    # ------------------------------------------------------------------
+    # Application
+    # ------------------------------------------------------------------
 
-    # Environment
+    "APP_NAME",
+    "APP_VERSION",
+    "PROJECT_NAME",
+    "APP_DESCRIPTION",
     "ENVIRONMENT",
+    "APP_ENV",
     "DEBUG",
+    "VERSION",
 
+    # ------------------------------------------------------------------
     # LLM
+    # ------------------------------------------------------------------
+
     "GROQ_API_KEY",
     "GROQ_MODEL",
+    "GROQ_MODEL_NAME",
     "MODEL_NAME",
     "LLM_MODEL",
     "DEFAULT_MODEL",
+
     "LLM_TEMPERATURE",
     "DEFAULT_TEMPERATURE",
+    "TEMPERATURE",
+
     "LLM_MAX_TOKENS",
     "DEFAULT_MAX_TOKENS",
+    "MAX_TOKENS",
 
-    # Agent token limits
+    # ------------------------------------------------------------------
+    # Agent limits
+    # ------------------------------------------------------------------
+
     "AGENT_TOKEN_LIMITS",
     "AGENT_MAX_TOKENS",
     "TOKEN_LIMITS",
@@ -1155,8 +1025,12 @@ __all__ = [
     "RTL_REPAIR_AGENT_MAX_TOKENS",
     "VERIFICATION_JUDGE_MAX_TOKENS",
 
-    # Temperatures
+    # ------------------------------------------------------------------
+    # Agent temperatures
+    # ------------------------------------------------------------------
+
     "AGENT_TEMPERATURES",
+
     "RTL_ANALYZER_TEMPERATURE",
     "VERIFICATION_PLANNER_TEMPERATURE",
     "TEST_GENERATOR_TEMPERATURE",
@@ -1171,99 +1045,197 @@ __all__ = [
     "RTL_REPAIR_AGENT_TEMPERATURE",
     "VERIFICATION_JUDGE_TEMPERATURE",
 
+    # ------------------------------------------------------------------
     # Prompt limits
-    "MAX_RTL_CHARS",
-    "MAX_TESTBENCH_CHARS",
-    "MAX_ANALYSIS_CHARS",
-    "MAX_FAILURE_OUTPUT_CHARS",
-    "MAX_COVERAGE_CHARS",
-    "MAX_TRACE_CHARS",
+    # ------------------------------------------------------------------
 
+    "MAX_RTL_CHARS",
+    "MAX_SPECIFICATION_CHARS",
+    "MAX_TESTBENCH_CHARS",
+    "MAX_SIMULATION_OUTPUT_CHARS",
+    "MAX_FAILURE_OUTPUT_CHARS",
+    "MAX_COVERAGE_OUTPUT_CHARS",
+    "MAX_AGENT_CONTEXT_CHARS",
+
+    "RTL_CHAR_LIMIT",
+    "SPECIFICATION_CHAR_LIMIT",
+    "TESTBENCH_CHAR_LIMIT",
+    "SIMULATION_OUTPUT_CHAR_LIMIT",
+    "AGENT_CONTEXT_CHAR_LIMIT",
+
+    # ------------------------------------------------------------------
     # EDA
+    # ------------------------------------------------------------------
+
     "IVERILOG_EXECUTABLE",
     "VVP_EXECUTABLE",
     "VERILATOR_EXECUTABLE",
     "YOSYS_EXECUTABLE",
+
     "IVERILOG",
     "VVP",
     "VERILATOR",
     "YOSYS",
+
     "SUPPORTED_EDA_TOOLS",
 
+    # ------------------------------------------------------------------
     # Formal
+    # ------------------------------------------------------------------
+
     "FORMAL_ENABLED_BY_DEFAULT",
-    "ENABLE_FORMAL",
-    "FORMAL_TIMEOUT",
-    "FORMAL_MAX_DEPTH",
     "SYMBIYOSYS_EXECUTABLE",
     "SBY_EXECUTABLE",
     "UNSUPPORTED_OR_OPTIONAL_TOOLS",
 
-    # Simulation
-    "SIMULATION_TIMEOUT",
-    "COMPILE_TIMEOUT",
-    "VERILATOR_TIMEOUT",
-    "YOSYS_TIMEOUT",
+    # ------------------------------------------------------------------
+    # Timeouts
+    # ------------------------------------------------------------------
 
+    "SIMULATION_TIMEOUT_SECONDS",
+    "COMPILE_TIMEOUT_SECONDS",
+    "VERILATOR_TIMEOUT_SECONDS",
+    "YOSYS_TIMEOUT_SECONDS",
+    "FORMAL_TIMEOUT_SECONDS",
+
+    "SIM_TIMEOUT",
+
+    # ------------------------------------------------------------------
     # Targets
+    # ------------------------------------------------------------------
+
+    "COVERAGE_TARGET",
+    "MUTATION_TARGET",
+    "VERIFICATION_SCORE_TARGET",
+
     "TARGET_COVERAGE",
     "TARGET_MUTATION_SCORE",
     "TARGET_VERIFICATION_SCORE",
-    "COVERAGE_TARGET",
-    "MUTATION_TARGET",
-    "VERIFICATION_TARGET",
 
-    # Iterations
+    "COVERAGE_THRESHOLD",
+    "MUTATION_THRESHOLD",
+    "VERIFICATION_THRESHOLD",
+
+    # ------------------------------------------------------------------
+    # Iteration
+    # ------------------------------------------------------------------
+
     "DEFAULT_MAX_ITERATIONS",
     "MIN_ITERATIONS",
     "MAX_ITERATIONS",
-    "MAX_VERIFICATION_ITERATIONS",
-    "DEFAULT_ITERATIONS",
 
+    # ------------------------------------------------------------------
     # Features
-    "ENABLE_RED_TEAM",
-    "ENABLE_MUTATION",
+    # ------------------------------------------------------------------
 
-    # Logging
-    "LOG_LEVEL",
-    "ENABLE_AGENT_LOGGING",
-    "ENABLE_TRACE_LOGGING",
-    "MAX_LOG_ENTRIES",
+    "RED_TEAM_ENABLED_BY_DEFAULT",
+    "MUTATION_ENABLED_BY_DEFAULT",
 
-    # Reports
-    "ENABLE_REPORTS",
-    "REPORT_FORMAT",
-
-    # Security
-    "ALLOW_EXTERNAL_COMMANDS",
-    "MAX_RTL_FILE_SIZE_BYTES",
-    "MAX_TESTBENCH_FILE_SIZE_BYTES",
-
+    # ------------------------------------------------------------------
     # RTL
+    # ------------------------------------------------------------------
+
     "DEFAULT_VERILOG_STANDARD",
-    "IVERILOG_STANDARD",
     "DEFAULT_TOP_MODULE",
 
-    # Markers
-    "TEST_PASS_MARKER",
-    "TEST_FAIL_MARKER",
-    "TEST_ERROR_MARKER",
+    # ------------------------------------------------------------------
+    # Test defaults
+    # ------------------------------------------------------------------
 
+    "DEFAULT_CLOCK_PERIOD_NS",
+    "DEFAULT_RESET_CYCLES",
+    "DEFAULT_TEST_TIMEOUT_NS",
+
+    # ------------------------------------------------------------------
+    # Logging
+    # ------------------------------------------------------------------
+
+    "LOG_LEVEL",
+    "ENABLE_AGENT_LOGGING",
+    "ENABLE_AGENT_TRACE",
+
+    # ------------------------------------------------------------------
+    # Reporting
+    # ------------------------------------------------------------------
+
+    "DEFAULT_REPORT_FORMAT",
+    "ENABLE_HTML_REPORT",
+
+    # ------------------------------------------------------------------
+    # Security
+    # ------------------------------------------------------------------
+
+    "MAX_UPLOAD_SIZE_MB",
+    "MAX_RTL_FILE_SIZE_BYTES",
+
+    # ------------------------------------------------------------------
     # Status
-    "STATUS_IDLE",
+    # ------------------------------------------------------------------
+
+    "STATUS_INITIALIZED",
     "STATUS_RUNNING",
-    "STATUS_PASSED",
+    "STATUS_COMPLETED",
     "STATUS_FAILED",
     "STATUS_ERROR",
-    "STATUS_COMPLETED",
-    "STATUS_NEEDS_REVIEW",
+    "STATUS_STOPPED",
 
+    # ------------------------------------------------------------------
     # Verdicts
+    # ------------------------------------------------------------------
+
     "VERDICT_PASS",
     "VERDICT_FAIL",
     "VERDICT_NEED_MORE",
 
-    # Functions
+    # ------------------------------------------------------------------
+    # Failure categories
+    # ------------------------------------------------------------------
+
+    "FAILURE_RTL",
+    "FAILURE_TESTBENCH",
+    "FAILURE_TEST",
+    "FAILURE_COMPILATION",
+    "FAILURE_SIMULATION",
+    "FAILURE_PROTOCOL",
+    "FAILURE_COVERAGE",
+    "FAILURE_UNKNOWN",
+
+    # ------------------------------------------------------------------
+    # File extensions
+    # ------------------------------------------------------------------
+
+    "VERILOG_EXTENSIONS",
+    "SYSTEMVERILOG_EXTENSIONS",
+    "RTL_EXTENSIONS",
+
+    # ------------------------------------------------------------------
+    # Paths
+    # ------------------------------------------------------------------
+
+    "BASE_DIR",
+    "CONFIG_DIR",
+    "AGENTS_DIR",
+    "GRAPH_DIR",
+    "EDA_DIR",
+    "VERIFICATION_DIR",
+    "LOGGING_DIR",
+    "REPORTS_DIR",
+    "PROMPTS_DIR",
+    "EXAMPLES_DIR",
+    "TESTS_DIR",
+    "DOCS_DIR",
+    "ASSETS_DIR",
+
+    "RUNTIME_DIR",
+    "RUNS_DIR",
+    "TEMP_DIR",
+    "LOG_DIR",
+    "REPORT_DIR",
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
     "ensure_directories",
     "get_agent_token_limit",
     "get_agent_temperature",
@@ -1271,5 +1243,4 @@ __all__ = [
     "get_available_eda_tools",
     "get_settings_summary",
 ]
-
 
