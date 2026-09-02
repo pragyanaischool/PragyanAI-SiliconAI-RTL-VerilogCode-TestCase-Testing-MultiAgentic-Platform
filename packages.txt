@@ -1,1 +1,7 @@
 iverilog
+verilator
+yosys
+symbiyosys
+boolector
+z3
+gtkwave
