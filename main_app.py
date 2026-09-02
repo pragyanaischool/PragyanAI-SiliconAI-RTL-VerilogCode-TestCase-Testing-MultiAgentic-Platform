@@ -17,8 +17,8 @@ st.set_page_config(
     page_icon="⚡",
     layout="wide"
 )
-
-st.title("⚡ Agentic RTL Design, Testbench & Verification Studio")
+st.image("PragyanAI_Transperent.png")
+st.title(" PragyanAI- Agentic RTL Design, Testbench & Verification Studio")
 st.markdown(
     "Powered by **LangGraph**, **Groq (`openai/gpt-oss-120b`)**, and **Icarus Verilog**. "
     "Enter a hardware specification to automatically generate, test, debug, and verify your Verilog design and testbench."
