@@ -859,6 +859,24 @@ DEFAULT_TEST_TIMEOUT_NS = int(
 
 
 # =============================================================================
+# TEST GENERATION LIMITS
+# =============================================================================
+
+# Maximum number of high-level verification scenarios the planner may request.
+MAX_TEST_SCENARIOS = int(os.getenv("MAX_TEST_SCENARIOS", "20"))
+
+# Maximum number of concrete generated test cases retained by the workflow.
+MAX_TEST_CASES = int(os.getenv("MAX_TEST_CASES", "30"))
+
+# Maximum number of lines allowed in an LLM-generated testbench.
+MAX_TESTBENCH_LINES = int(os.getenv("MAX_TESTBENCH_LINES", "1200"))
+
+# Compatibility aliases used by existing agent implementations.
+MAX_TESTS = MAX_TEST_CASES
+MAX_GENERATED_TESTS = MAX_TEST_CASES
+
+
+# =============================================================================
 # LOGGING
 # =============================================================================
 
@@ -1420,6 +1438,11 @@ __all__ = [
     "DEFAULT_CLOCK_PERIOD_NS",
     "DEFAULT_RESET_CYCLES",
     "DEFAULT_TEST_TIMEOUT_NS",
+    "MAX_TEST_SCENARIOS",
+    "MAX_TEST_CASES",
+    "MAX_TESTBENCH_LINES",
+    "MAX_TESTS",
+    "MAX_GENERATED_TESTS",
 
     # Logging
     "LOG_LEVEL",
@@ -1470,4 +1493,3 @@ __all__ = [
     "get_available_eda_tools",
     "get_settings_summary",
 ]
-
